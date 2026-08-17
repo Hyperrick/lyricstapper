@@ -20,7 +20,12 @@ test("server-renders the lyricstapper workspace", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>lyricstapper<\/title>/i);
-  assert.match(html, /Manual lyric timing/i);
-  assert.match(html, /Local only/i);
+  assert.match(html, /Media &amp; lyrics/i);
+  assert.match(html, /Source/i);
+  assert.match(html, /Captions/i);
+  assert.match(html, /Style/i);
+  assert.match(html, /Export/i);
+  assert.match(html, /Choose audio or video/i);
+  assert.doesNotMatch(html, /Local only|Manual lyric timing|Your media stays on this device/i);
   assert.doesNotMatch(html, /Beatmark|codex-preview|Building your site/i);
 });

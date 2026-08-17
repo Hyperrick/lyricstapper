@@ -1,17 +1,24 @@
 "use client";
 
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { Banner, BannerStatus } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
 import { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { distributeWords, downloadText, formatClock, importCaptionFile, parseLyrics, TimedLine, toAss, toJson, toSrt } from "../lib/captions";
+import { distributeWords, downloadText, importCaptionFile, parseLyrics, TimedLine, toAss, toJson, toSrt } from "../lib/captions";
 import { DEFAULT_CAPTION_STYLE, normalizeCaptionStyle, CaptionStyle } from "../lib/captionStyle";
 import { parseProject, ProjectMedia, serializeProject } from "../lib/projectFile";
-import { chooseRememberedMedia, recallMedia, rememberMedia, supportsRememberedMedia } from "../lib/mediaLibrary";
+import { chooseRememberedMedia, recallMedia, rememberMedia } from "../lib/mediaLibrary";
 import { downloadBlob, renderCaptionedMp4 } from "../lib/videoExport";
-import { LyricsTable } from "./LyricsTable";
-import { CaptionTimeline } from "./CaptionTimeline";
-import { CaptionPreview } from "./CaptionPreview";
 import { CaptionStylePanel } from "./CaptionStylePanel";
+import { CaptionPanel } from "./editor/CaptionPanel";
+import { EditorHeader } from "./editor/EditorHeader";
+import { ExportPanel } from "./editor/ExportPanel";
+import { EditorMode, MediaElement, MediaStage } from "./editor/MediaStage";
+import { ShortcutDialog } from "./editor/ShortcutDialog";
+import { SourcePanel } from "./editor/SourcePanel";
+import { WorkspaceTabs } from "./editor/WorkspaceTabs";
+import { WorkspaceTask, WORKSPACE_TASK_DETAILS } from "./editor/workspace";
 
-type MediaElement = HTMLVideoElement | HTMLAudioElement;
 type TimingSnapshot = { lines: TimedLine[]; activeIndex: number; time: number };
 
 export function LyricTimestamper() {
@@ -36,11 +43,12 @@ export function LyricTimestamper() {
   const [selectedLineIndex, setSelectedLineIndex] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
   const [renderProgress, setRenderProgress] = useState<number | null>(null);
-  const [mode, setMode] = useState<"tag" | "edit">("tag");
-  const [rightPanelMode, setRightPanelMode] = useState<"timing" | "style">("timing");
+  const [mode, setMode] = useState<EditorMode>("tag");
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE);
-  const [timingPanelWidth, setTimingPanelWidth] = useState(440);
-  const [setupPanelWidth, setSetupPanelWidth] = useState(390);
+  const [activeTask, setActiveTask] = useState<WorkspaceTask>("source");
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
+  const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
+  const [inspectorWidth, setInspectorWidth] = useState(380);
 
   const completedCount = lines.filter((line) => line.end !== null).length;
   const activeLine = activeIndex >= 0 ? lines[activeIndex] : null;
@@ -72,6 +80,10 @@ export function LyricTimestamper() {
     setActiveIndex(parsed.length ? 0 : -1);
     setSelectedLineIndex(null);
     historyRef.current = [];
+    if (parsed.length) {
+      setActiveTask("captions");
+      setIsInspectorOpen(true);
+    }
   }, [lyricsRows]);
 
   const playMedia = useCallback((media: MediaElement) => {
@@ -114,7 +126,7 @@ export function LyricTimestamper() {
     if (mediaRef.current) mediaRef.current.currentTime = snapshot.time;
   }, []);
 
-  const switchMode = useCallback((nextMode: "tag" | "edit") => {
+  const switchMode = useCallback((nextMode: EditorMode) => {
     if (nextMode === "edit") {
       if (holdingLineRef.current !== null) endHeldLine();
       mediaRef.current?.pause();
@@ -195,10 +207,8 @@ export function LyricTimestamper() {
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const savedTimingWidth = Number(window.localStorage.getItem("lyricstapper-timing-panel-width"));
-      const savedSetupWidth = Number(window.localStorage.getItem("lyricstapper-setup-panel-width"));
-      if (Number.isFinite(savedTimingWidth) && savedTimingWidth >= 320 && savedTimingWidth <= 680) setTimingPanelWidth(savedTimingWidth);
-      if (Number.isFinite(savedSetupWidth) && savedSetupWidth >= 300 && savedSetupWidth <= 620) setSetupPanelWidth(savedSetupWidth);
+      const savedInspectorWidth = Number(window.localStorage.getItem("lyricstapper-inspector-width") ?? window.localStorage.getItem("lyricstapper-timing-panel-width"));
+      if (Number.isFinite(savedInspectorWidth) && savedInspectorWidth >= 320 && savedInspectorWidth <= 460) setInspectorWidth(savedInspectorWidth);
       const savedCaptionStyle = window.localStorage.getItem("lyricstapper-caption-style");
       if (savedCaptionStyle) {
         try { setCaptionStyle(normalizeCaptionStyle(JSON.parse(savedCaptionStyle))); } catch { /* Ignore invalid local preferences. */ }
@@ -212,35 +222,17 @@ export function LyricTimestamper() {
     window.localStorage.setItem("lyricstapper-caption-style", JSON.stringify(nextStyle));
   }, []);
 
-  function beginPanelResize(event: ReactPointerEvent<HTMLDivElement>) {
+  function beginInspectorResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     const startX = event.clientX;
-    const startWidth = timingPanelWidth;
+    const startWidth = inspectorWidth;
     const move = (pointerEvent: PointerEvent) => {
-      const width = Math.min(680, Math.max(320, startWidth + startX - pointerEvent.clientX));
-      setTimingPanelWidth(width);
+      const width = Math.min(460, Math.max(320, startWidth + startX - pointerEvent.clientX));
+      setInspectorWidth(width);
     };
     const end = (pointerEvent: PointerEvent) => {
-      const width = Math.min(680, Math.max(320, startWidth + startX - pointerEvent.clientX));
-      window.localStorage.setItem("lyricstapper-timing-panel-width", String(width));
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end, { once: true });
-  }
-
-  function beginSetupPanelResize(event: ReactPointerEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = setupPanelWidth;
-    const move = (pointerEvent: PointerEvent) => {
-      const width = Math.min(620, Math.max(300, startWidth + pointerEvent.clientX - startX));
-      setSetupPanelWidth(width);
-    };
-    const end = (pointerEvent: PointerEvent) => {
-      const width = Math.min(620, Math.max(300, startWidth + pointerEvent.clientX - startX));
-      window.localStorage.setItem("lyricstapper-setup-panel-width", String(width));
+      const width = Math.min(460, Math.max(320, startWidth + startX - pointerEvent.clientX));
+      window.localStorage.setItem("lyricstapper-inspector-width", String(width));
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
     };
@@ -305,6 +297,8 @@ export function LyricTimestamper() {
     setActiveIndex(project.captions.length ? 0 : -1);
     setSelectedLineIndex(null);
     setMode("edit");
+    setActiveTask("captions");
+    setIsInspectorOpen(true);
     historyRef.current = [];
     const rememberedMedia = await recallMedia(project.media).catch(() => null);
     if (rememberedMedia) {
@@ -343,6 +337,8 @@ export function LyricTimestamper() {
       setActiveIndex(0);
       setSelectedLineIndex(null);
       historyRef.current = [];
+      setActiveTask("captions");
+      setIsInspectorOpen(true);
       setNotice(`${imported.length} lines imported from ${file.name}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Import failed.");
@@ -354,7 +350,7 @@ export function LyricTimestamper() {
   async function exportMp4() {
     if (!mediaFile || !isVideo) return;
     try {
-      setNotice("Rendering MP4 locally…");
+      setNotice("Rendering MP4…");
       setRenderProgress(0);
       const blob = await renderCaptionedMp4(mediaFile, lines, captionStyle, setRenderProgress);
       downloadBlob(`${baseName}-captioned.mp4`, blob);
@@ -366,166 +362,169 @@ export function LyricTimestamper() {
     }
   }
 
-  function updateEnd(index: number, value: string) {
-    if (!value.trim()) {
+  function updateEnd(index: number, value: number | null) {
+    if (value === null) {
       setLines((previous) => previous.map((line, lineIndex) => lineIndex === index ? { ...line, end: null, words: undefined } : line));
       return;
     }
-    const end = Number(value);
-    if (!Number.isFinite(end)) return;
     setLines((previous) => previous.map((line, lineIndex) => {
-      if (lineIndex === index) return { ...line, end };
+      if (lineIndex === index) return { ...line, end: value };
       return line;
     }));
   }
 
   const baseName = (mediaName || "captions").replace(/\.[^.]+$/, "");
   const previewFontSize = Math.max(12, ((fittedVideoSize?.height ?? playerSize.height) || 500) * captionStyle.fontSizePercent / 100);
-  const captionPreview = previewLine ? <CaptionPreview line={previewLine} activeWordIndex={previewWordIndex} style={captionStyle} fontSize={previewFontSize} /> : null;
+  const activeLineText = activeLine?.text || (lines.length && activeIndex >= lines.length ? "Timing complete" : "Prepare your lyrics");
+
+  function selectTimelineLine(index: number) {
+    setSelectedLineIndex(index);
+    setActiveIndex(index);
+  }
+
+  function selectCaptionLine(index: number) {
+    const line = lines[index];
+    setActiveIndex(index);
+    setSelectedLineIndex(line.end !== null ? index : null);
+    if (mediaRef.current && line.start !== null) mediaRef.current.currentTime = line.start;
+  }
+
+  function seekMedia(time: number) {
+    if (mediaRef.current) mediaRef.current.currentTime = time;
+  }
+
+  function updateTimelineLine(index: number, updatedLine: TimedLine) {
+    setLines((previous) => previous.map((line, lineIndex) => lineIndex === index ? updatedLine : line));
+  }
+
+  function exportProject() {
+    downloadText(`${baseName}.lyricstapper.json`, serializeProject(lines, captionStyle, {
+      name: mediaName,
+      duration,
+      width: videoSize.width,
+      height: videoSize.height,
+      size: mediaFile?.size,
+      lastModified: mediaFile?.lastModified,
+    }), "application/json");
+  }
+
+  function exportAss() {
+    downloadText(`${baseName}.ass`, toAss(lines, videoSize.width, videoSize.height, captionStyle), "text/plain");
+  }
+
+  function exportSrt() {
+    downloadText(`${baseName}.srt`, toSrt(lines), "application/x-subrip");
+  }
+
+  function exportJson() {
+    downloadText(`${baseName}.json`, toJson(lines, mediaName, duration), "application/json");
+  }
+
+  function openTask(task: WorkspaceTask) {
+    setActiveTask(task);
+    setIsInspectorOpen(true);
+  }
+
+  const taskDetails = WORKSPACE_TASK_DETAILS[activeTask];
+  const noticeStatus: BannerStatus = /failed|could not/i.test(notice)
+    ? "error"
+    : /differs|check the timing/i.test(notice)
+      ? "warning"
+      : /saved|connected|imported/i.test(notice)
+        ? "success"
+        : "info";
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-mark"><span />lyricstapper</div>
-        <div className="header-copy">
-          <p>Manual lyric timing</p>
-          <span>Local only · no transcription · no upload</span>
-        </div>
-        <div className="progress-chip"><strong>{completedCount}</strong><span>/ {lines.length || 0} lines</span></div>
-      </header>
-
-      <section className="workspace" style={{ "--setup-panel-width": `${setupPanelWidth}px`, "--timing-panel-width": `${timingPanelWidth}px` } as CSSProperties}>
-        <aside className="setup-panel panel">
-          <div className="panel-resizer setup-resizer" onPointerDown={beginSetupPanelResize} role="separator" aria-orientation="vertical" aria-label="Resize source panel" />
-          <div className="section-heading">
-            <span className="eyebrow">01 · SOURCE</span>
-            <h1>Load. Play.<br />Mark the beat.</h1>
-          </div>
-
-          <input className="media-file-input" ref={mediaInputRef} type="file" accept="audio/*,video/*" onChange={loadMedia} />
-          <button type="button" className="file-drop" onClick={() => {
-            if (supportsRememberedMedia()) void chooseMedia();
-            else mediaInputRef.current?.click();
-          }}>
-            <span className="file-icon">{projectMediaReference ? "↻" : "↗"}</span>
-            <strong>{projectMediaReference ? `Reconnect ${projectMediaReference.name}` : mediaName || "Choose audio or video"}</strong>
-            <small>{projectMediaReference ? "Select the original file from your Desktop" : "MP3, WAV, MP4 or MOV"}</small>
-          </button>
-
-          <LyricsTable rows={lyricsRows} onChange={setLyricsRows} />
-          <button className="secondary-button" onClick={loadLyrics}>Prepare {lyricsRows.filter((row) => row.trim()).length} lines</button>
-          <label className="secondary-button import-button">Open lyricstapper project<input type="file" accept=".json" onChange={loadProjectFile} /></label>
-          <label className="secondary-button import-button">Import captions JSON, SRT or ASS<input type="file" accept=".json,.srt,.ass" onChange={loadCaptionImport} /></label>
-          {notice && <p className="notice" role="status">{renderProgress === null ? notice : `${notice} ${Math.round(renderProgress * 100)}%`}</p>}
-
-          <div className="shortcut-grid">
-            <div><kbd>HOLD SPACE</kbd><span>show lyric</span></div>
-            <div><kbd>⌫</kbd><span>undo marker</span></div>
-            <div><kbd>P</kbd><span>play / pause</span></div>
-            <div><kbd>← →</kbd><span>nudge 0.1 sec</span></div>
-          </div>
-        </aside>
-
-        <section className="stage-panel panel">
-          <div className="transport">
-            <div className="timecode"><span>{formatClock(currentTime)}</span><small>{formatClock(duration)}</small></div>
-            <div className="transport-actions">
-              <div className="mode-toggle" aria-label="Editor mode">
-                <button className={mode === "tag" ? "is-active" : ""} onClick={() => switchMode("tag")}>TAG</button>
-                <button className={mode === "edit" ? "is-active" : ""} onClick={() => switchMode("edit")}>EDIT</button>
-              </div>
-              <button className="secondary-button compact" onClick={beginSession} disabled={mode !== "tag" || !mediaUrl || !lines.length}>{isPlaying ? "Restart timing" : "Start timing"}</button>
-              <button className="mark-button" onPointerDown={(event) => { event.preventDefault(); beginHeldLine(); }} onPointerUp={endHeldLine} onPointerCancel={endHeldLine} disabled={mode !== "tag" || !mediaUrl || activeIndex < 0 || activeIndex >= lines.length}><span>HOLD SPACE</span> Hold for lyric</button>
-              <button className="icon-button" onClick={undoMarker} disabled={mode !== "tag"} aria-label="Undo last marker">↶</button>
+    <AppShell
+      className="app-shell"
+      contentPadding={0}
+      height="fill"
+      mobileNav={false}
+      variant="section"
+      topNav={<EditorHeader activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onTaskChange={openTask} onShowShortcuts={() => setIsShortcutDialogOpen(true)} />}
+    >
+      <section className="workspace" data-inspector-open={isInspectorOpen} style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}>
+        <MediaStage
+          activeTask={activeTask}
+          playerRef={playerRef}
+          mediaUrl={mediaUrl}
+          isVideo={isVideo}
+          fittedVideoSize={fittedVideoSize}
+          currentTime={currentTime}
+          duration={duration}
+          mode={mode}
+          isPlaying={isPlaying}
+          lines={lines}
+          activeIndex={activeIndex}
+          activeLineText={activeLineText}
+          selectedLineIndex={selectedLineIndex}
+          previewLine={previewLine}
+          previewWordIndex={previewWordIndex}
+          captionStyle={captionStyle}
+          previewFontSize={previewFontSize}
+          onMediaElement={(element) => { mediaRef.current = element; }}
+          onModeChange={switchMode}
+          onBeginSession={beginSession}
+          onBeginHeldLine={beginHeldLine}
+          onEndHeldLine={endHeldLine}
+          onUndoMarker={undoMarker}
+          onTimeChange={setCurrentTime}
+          onMetadata={connectLoadedMedia}
+          onPlayingChange={setIsPlaying}
+          onSelectLine={selectTimelineLine}
+          onSeek={seekMedia}
+          onLineChange={updateTimelineLine}
+          onOpenSource={() => openTask("source")}
+        />
+        {isInspectorOpen && <button className="inspector-scrim" type="button" aria-label="Close editor tool" onClick={() => setIsInspectorOpen(false)} />}
+        <aside className="tool-inspector" aria-label={taskDetails.title} aria-hidden={!isInspectorOpen}>
+          <div className="inspector-resizer" onPointerDown={beginInspectorResize} role="separator" aria-orientation="vertical" aria-label="Resize editor tool" />
+          <header className="inspector-header">
+            <div>
+              <span className="eyebrow">{taskDetails.eyebrow}</span>
+              <h1>{taskDetails.title}</h1>
+              <p>{taskDetails.description}</p>
             </div>
-            <div className="now-marking">
-              <span>NOW MARKING</span>
-              <strong>{activeLine?.text || (lines.length && activeIndex >= lines.length ? "Timing complete" : "Prepare your lyrics")}</strong>
-            </div>
-          </div>
-
-          <div className="player-wrap" ref={playerRef}>
-            {mediaUrl ? (
-              isVideo ? (
-                <div className="video-canvas" style={fittedVideoSize ?? undefined}>
-                  {/* Captions are rendered by the custom synchronized overlay. */}
-                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                  <video ref={(node) => { mediaRef.current = node; }} src={mediaUrl} controls playsInline onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => {
-                    connectLoadedMedia(event.currentTarget.duration, event.currentTarget.videoWidth, event.currentTarget.videoHeight);
-                  }} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} />
-                  {captionPreview}
-                </div>
-              ) : (
-                <div className="audio-player">
-                  <div className="record-groove"><span /></div>
-                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                  <audio ref={(node) => { mediaRef.current = node; }} src={mediaUrl} controls onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onLoadedMetadata={(event) => connectLoadedMedia(event.currentTarget.duration)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} />
-                  {captionPreview}
-                </div>
-              )
-            ) : (
-              <div className="empty-stage"><div className="empty-orbit" /><p>Your media stays on this device.</p></div>
+            <Button label="Close editor tool" variant="ghost" isIconOnly icon={<span aria-hidden="true">×</span>} onClick={() => setIsInspectorOpen(false)} />
+          </header>
+          <div className="inspector-scroll">
+            {notice && <div className="editor-notice"><Banner status={noticeStatus} title={notice} isDismissable onDismiss={() => setNotice("")} /></div>}
+            {activeTask === "source" && (
+              <SourcePanel
+                mediaInputRef={mediaInputRef}
+                mediaName={mediaName}
+                projectMediaReference={projectMediaReference}
+                lyricsRows={lyricsRows}
+                onChooseMedia={() => { void chooseMedia(); }}
+                onLoadMedia={loadMedia}
+                onLyricsChange={setLyricsRows}
+                onPrepareLyrics={loadLyrics}
+                onLoadProject={loadProjectFile}
+                onImportCaptions={loadCaptionImport}
+              />
             )}
-
-          </div>
-
-          <CaptionTimeline
-            lines={lines}
-            duration={duration}
-            currentTime={currentTime}
-            selectedIndex={selectedLineIndex}
-            onSelect={(index) => { setSelectedLineIndex(index); setActiveIndex(index); }}
-            onSeek={(time) => { if (mediaRef.current) mediaRef.current.currentTime = time; }}
-            onChange={(index, updatedLine) => setLines((previous) => previous.map((line, lineIndex) => lineIndex === index ? updatedLine : line))}
-            editable={mode === "edit"}
-          />
-
-        </section>
-
-        <aside className="timing-panel panel">
-          <div className="panel-resizer timing-resizer" onPointerDown={beginPanelResize} role="separator" aria-orientation="vertical" aria-label="Resize timing panel" />
-          <div className="timing-header">
-            <div><span className="eyebrow">02 · CAPTIONS</span><h2>{rightPanelMode === "timing" ? "Caption map" : "Caption style"}</h2></div>
-            <span className="duration-pill">{formatClock(duration)}</span>
-          </div>
-
-          <div className="panel-mode-toggle" aria-label="Caption panel">
-            <button className={rightPanelMode === "timing" ? "is-active" : ""} onClick={() => setRightPanelMode("timing")}>TIMING</button>
-            <button className={rightPanelMode === "style" ? "is-active" : ""} onClick={() => setRightPanelMode("style")}>STYLE</button>
-          </div>
-
-          {rightPanelMode === "timing" ? <div className="line-list">
-            {lines.length ? lines.map((line, index) => (
-              <div className={`line-row ${index === activeIndex ? "is-active" : ""} ${line.end !== null ? "is-done" : ""}`} key={line.id} role="button" tabIndex={0} onClick={() => {
-                setActiveIndex(index);
-                setSelectedLineIndex(line.end !== null ? index : null);
-                if (mediaRef.current && line.start !== null) mediaRef.current.currentTime = line.start;
-              }} onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.stopPropagation();
-                setActiveIndex(index);
-                setSelectedLineIndex(line.end !== null ? index : null);
-                if (mediaRef.current && line.start !== null) mediaRef.current.currentTime = line.start;
-              }}>
-                <span className="line-number">{String(index + 1).padStart(2, "0")}</span>
-                <span className="line-content"><strong>{line.text}</strong><small>{formatClock(line.start)} →</small></span>
-                <input aria-label={`End time for line ${index + 1}`} value={line.end === null ? "" : line.end.toFixed(3)} placeholder="end" onClick={(event) => event.stopPropagation()} onChange={(event) => updateEnd(index, event.target.value)} />
-              </div>
-            )) : <div className="empty-list"><span>♪</span><p>Your timed lines will appear here.</p></div>}
-          </div> : <CaptionStylePanel value={captionStyle} onChange={updateCaptionStyle} />}
-
-          <div className="export-block">
-            <div className="export-label"><span className="eyebrow">03 · EXPORT</span><small>{completedCount === lines.length && lines.length ? "Ready" : `${lines.length - completedCount} left`}</small></div>
-            <div className="export-grid">
-              <button className="project-export" disabled={!lines.length} onClick={() => downloadText(`${baseName}.lyricstapper.json`, serializeProject(lines, captionStyle, { name: mediaName, duration, width: videoSize.width, height: videoSize.height, size: mediaFile?.size, lastModified: mediaFile?.lastModified }), "application/json")}>PROJECT <span>Save editing</span></button>
-              <button onClick={() => downloadText(`${baseName}.ass`, toAss(lines, videoSize.width, videoSize.height, captionStyle), "text/plain")}>ASS <span>Styled karaoke</span></button>
-              <button onClick={() => downloadText(`${baseName}.srt`, toSrt(lines), "application/x-subrip")}>SRT <span>Captions</span></button>
-              <button onClick={() => downloadText(`${baseName}.json`, toJson(lines, mediaName, duration), "application/json")}>JSON <span>Word times</span></button>
-              <button className="mp4-export" onClick={exportMp4} disabled={!mediaFile || !isVideo || renderProgress !== null}>MP4 <span>{renderProgress === null ? "Burned captions" : `${Math.round(renderProgress * 100)}%`}</span></button>
-            </div>
+            {activeTask === "captions" && <CaptionPanel lines={lines} activeIndex={activeIndex} duration={duration} onSelectLine={selectCaptionLine} onUpdateEnd={updateEnd} />}
+            {activeTask === "style" && <CaptionStylePanel value={captionStyle} onChange={updateCaptionStyle} />}
+            {activeTask === "export" && (
+              <ExportPanel
+                lineCount={lines.length}
+                completedCount={completedCount}
+                canExportMp4={Boolean(mediaFile && isVideo)}
+                renderProgress={renderProgress}
+                onExportProject={exportProject}
+                onExportAss={exportAss}
+                onExportSrt={exportSrt}
+                onExportJson={exportJson}
+                onExportMp4={() => { void exportMp4(); }}
+              />
+            )}
           </div>
         </aside>
       </section>
-    </main>
+      <nav className="mobile-taskbar" aria-label="Editor tools">
+        <WorkspaceTabs activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onChange={openTask} layout="fill" />
+      </nav>
+      <ShortcutDialog isOpen={isShortcutDialogOpen} onOpenChange={setIsShortcutDialogOpen} />
+    </AppShell>
   );
 }

@@ -1,5 +1,10 @@
 "use client";
 
+import { Button } from "@astryxdesign/core/Button";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Slider } from "@astryxdesign/core/Slider";
+import { Switch } from "@astryxdesign/core/Switch";
 import { CAPTION_FONTS, CAPTION_PRESETS, CaptionStyle } from "../lib/captionStyle";
 
 type CaptionStylePanelProps = {
@@ -13,46 +18,74 @@ export function CaptionStylePanel({ value, onChange }: CaptionStylePanelProps) {
   }
 
   return (
-    <div className="caption-styler">
-      <div className="style-section">
-        <span className="style-label">PRESETS</span>
+    <div className="tool-panel-content caption-styler">
+      <section className="tool-section style-section">
+        <div className="section-copy">
+          <strong>Presets</strong>
+          <small>Start with a look, then tune every detail below.</small>
+        </div>
         <div className="preset-grid">
-          {CAPTION_PRESETS.map((preset) => <button key={preset.name} onClick={() => onChange({ ...preset.style })}>{preset.name}</button>)}
+          {CAPTION_PRESETS.map((preset) => (
+            <Button key={preset.name} label={`Apply ${preset.name} preset`} variant="secondary" size="sm" onClick={() => onChange({ ...preset.style })}>{preset.name}</Button>
+          ))}
         </div>
-      </div>
+      </section>
 
-      <div className="style-section style-grid">
-        <label><span>Font</span><select value={value.fontFamily} onChange={(event) => update("fontFamily", event.target.value)}>{CAPTION_FONTS.map((font) => <option key={font}>{font}</option>)}</select></label>
-        <label><span>Weight</span><select value={value.fontWeight} onChange={(event) => update("fontWeight", Number(event.target.value) as CaptionStyle["fontWeight"])}><option value="500">Medium</option><option value="700">Bold</option><option value="900">Black</option></select></label>
-        <label className="range-control"><span>Size <strong>{value.fontSizePercent.toFixed(1)}%</strong></span><input type="range" min="2.5" max="9" step="0.1" value={value.fontSizePercent} onChange={(event) => update("fontSizePercent", Number(event.target.value))} /></label>
-        <label className="range-control"><span>Position <strong>{value.bottomPercent}%</strong></span><input type="range" min="5" max="45" value={value.bottomPercent} onChange={(event) => update("bottomPercent", Number(event.target.value))} /></label>
-      </div>
+      <section className="tool-section style-section control-stack">
+        <Selector label="Font" options={[...CAPTION_FONTS]} value={value.fontFamily} onChange={(font) => update("fontFamily", font)} width="100%" />
+        <Selector
+          label="Weight"
+          options={[{ value: "500", label: "Medium" }, { value: "700", label: "Bold" }, { value: "900", label: "Black" }]}
+          value={String(value.fontWeight)}
+          onChange={(weight) => update("fontWeight", Number(weight) as CaptionStyle["fontWeight"])}
+          width="100%"
+        />
+        <Slider label="Caption size" min={2.5} max={9} step={0.1} value={value.fontSizePercent} valueDisplay="text" formatValue={(size: number) => `${size.toFixed(1)}%`} onChange={(size: number) => update("fontSizePercent", size)} />
+        <Slider label="Distance from bottom" min={5} max={45} value={value.bottomPercent} valueDisplay="text" formatValue={(position: number) => `${position}%`} onChange={(position: number) => update("bottomPercent", position)} />
+      </section>
 
-      <div className="style-section">
-        <span className="style-label">COLORS</span>
+      <section className="tool-section style-section">
+        <div className="section-copy">
+          <strong>Colors</strong>
+          <small>These colors belong to the exported captions, independent of the app theme.</small>
+        </div>
         <div className="color-grid">
-          <label><span>Text</span><input type="color" value={value.textColor} onChange={(event) => update("textColor", event.target.value)} /></label>
-          <label><span>Highlight</span><input type="color" value={value.highlightColor} onChange={(event) => update("highlightColor", event.target.value)} /></label>
-          {value.highlightMode === "background" && <label><span>Active text</span><input type="color" value={value.highlightTextColor} onChange={(event) => update("highlightTextColor", event.target.value)} /></label>}
-          <label><span>Panel</span><input type="color" value={value.backgroundColor} onChange={(event) => update("backgroundColor", event.target.value)} /></label>
+          <ColorControl label="Text" value={value.textColor} onChange={(color) => update("textColor", color)} />
+          <ColorControl label="Highlight" value={value.highlightColor} onChange={(color) => update("highlightColor", color)} />
+          {value.highlightMode === "background" && <ColorControl label="Active text" value={value.highlightTextColor} onChange={(color) => update("highlightTextColor", color)} />}
+          <ColorControl label="Background" value={value.backgroundColor} onChange={(color) => update("backgroundColor", color)} />
         </div>
-      </div>
+      </section>
 
-      <div className="style-section">
-        <span className="style-label">ACTIVE WORD</span>
-        <div className="segmented-control">
-          {(["none", "text", "background"] as const).map((mode) => <button className={value.highlightMode === mode ? "is-active" : ""} key={mode} onClick={() => update("highlightMode", mode)}>{mode}</button>)}
-        </div>
-        <label className="range-control"><span>Past words <strong>{value.pastOpacity}%</strong></span><input type="range" min="20" max="100" value={value.pastOpacity} onChange={(event) => update("pastOpacity", Number(event.target.value))} /></label>
-      </div>
+      <section className="tool-section style-section control-stack">
+        <SegmentedControl value={value.highlightMode} onChange={(mode) => update("highlightMode", mode as CaptionStyle["highlightMode"])} label="Active word highlight" layout="fill">
+          <SegmentedControlItem value="none" label="None" />
+          <SegmentedControlItem value="text" label="Text" />
+          <SegmentedControlItem value="wipe" label="Wipe" />
+          <SegmentedControlItem value="background" label="Block" />
+        </SegmentedControl>
+        <Slider label="Past word opacity" min={20} max={100} value={value.pastOpacity} valueDisplay="text" formatValue={(opacity: number) => `${opacity}%`} onChange={(opacity: number) => update("pastOpacity", opacity)} />
+      </section>
 
-      <div className="style-section toggle-list">
-        <label><span>Drop shadow</span><input type="checkbox" checked={value.shadow} onChange={(event) => update("shadow", event.target.checked)} /></label>
-        <label><span>Dark outline</span><input type="checkbox" checked={value.outline} onChange={(event) => update("outline", event.target.checked)} /></label>
-        <label><span>Caption background</span><input type="checkbox" checked={value.captionBackground} onChange={(event) => update("captionBackground", event.target.checked)} /></label>
-        {value.captionBackground && <label className="range-control"><span>Background <strong>{value.backgroundOpacity}%</strong></span><input type="range" min="10" max="100" value={value.backgroundOpacity} onChange={(event) => update("backgroundOpacity", Number(event.target.value))} /></label>}
-        <label><span>Uppercase</span><input type="checkbox" checked={value.uppercase} onChange={(event) => update("uppercase", event.target.checked)} /></label>
-      </div>
+      <section className="tool-section style-section switch-stack">
+        <Switch label="Drop shadow" value={value.shadow} onChange={(enabled) => update("shadow", enabled)} labelSpacing="spread" width="100%" />
+        <Switch label="Dark outline" value={value.outline} onChange={(enabled) => update("outline", enabled)} labelSpacing="spread" width="100%" />
+        <Switch label="Caption background" value={value.captionBackground} onChange={(enabled) => update("captionBackground", enabled)} labelSpacing="spread" width="100%" />
+        {value.captionBackground && <Slider label="Background opacity" min={10} max={100} value={value.backgroundOpacity} valueDisplay="text" formatValue={(opacity: number) => `${opacity}%`} onChange={(opacity: number) => update("backgroundOpacity", opacity)} />}
+        <Switch label="Uppercase" value={value.uppercase} onChange={(enabled) => update("uppercase", enabled)} labelSpacing="spread" width="100%" />
+      </section>
     </div>
+  );
+}
+
+function ColorControl({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="color-control">
+      <span>{label}</span>
+      <span className="color-control-input">
+        <input type="color" value={value} onChange={(event) => onChange(event.target.value)} aria-label={`${label} color`} />
+        <code>{value.toUpperCase()}</code>
+      </span>
+    </label>
   );
 }

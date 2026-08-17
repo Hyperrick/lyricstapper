@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@astryxdesign/core/Button";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { distributeWords, formatClock, TimedLine } from "../lib/captions";
 
@@ -249,21 +251,21 @@ export function CaptionTimeline({ lines, duration, currentTime, selectedIndex, o
     <section className={`caption-timeline ${editable ? "is-editable" : "is-readonly"}`} aria-label="Caption timeline" style={{ "--timeline-height": `${timelineHeight}px` } as CSSProperties}>
       <header>
         <div><span>CAPTION TIMELINE</span><strong>{viewMode === "words" && selectedWords.length > 1 ? `${selectedWords.length} words selected` : selectedLines.length > 1 ? `${selectedLines.length} lines selected` : selectedIndex === null ? "Select a block to fine-tune it" : lines[selectedIndex]?.text}</strong></div>
-        <div className="timeline-toggle" aria-label="Timeline detail">
-          <button className={viewMode === "lines" ? "is-active" : ""} onClick={() => { setViewMode("lines"); setSelectedWords([]); }}>SHOW LINES</button>
-          <button className={viewMode === "words" ? "is-active" : ""} onClick={() => setViewMode("words")}>SHOW WORDS</button>
-        </div>
+        <SegmentedControl value={viewMode} onChange={(value) => { setViewMode(value as "lines" | "words"); if (value === "lines") setSelectedWords([]); }} label="Timeline detail" size="sm">
+          <SegmentedControlItem value="lines" label="Lines" />
+          <SegmentedControlItem value="words" label="Words" />
+        </SegmentedControl>
         <div className="timeline-zoom" aria-label="Timeline zoom">
-          <button onClick={() => changeZoom(zoom - 0.5)} disabled={zoom <= 1} aria-label="Zoom out">−</button>
-          <button className="zoom-value" onClick={() => changeZoom(1)} title="Fit timeline">{Math.round(zoom * 100)}%</button>
-          <button onClick={() => changeZoom(zoom + 0.5)} disabled={zoom >= 8} aria-label="Zoom in">＋</button>
+          <Button label="Zoom out" size="sm" variant="ghost" isDisabled={zoom <= 1} onClick={() => changeZoom(zoom - 0.5)}>−</Button>
+          <Button className="zoom-value" label="Fit timeline" size="sm" variant="ghost" onClick={() => changeZoom(1)}>{Math.round(zoom * 100)}%</Button>
+          <Button label="Zoom in" size="sm" variant="ghost" isDisabled={zoom >= 8} onClick={() => changeZoom(zoom + 0.5)}>＋</Button>
         </div>
         <small>{formatClock(currentTime)} / {formatClock(timelineDuration)}</small>
       </header>
       <div className="timeline-scroll" ref={scrollRef}>
         <div className="timeline-content" style={{ width: `${zoom * 100}%` }}>
           <div className="timeline-ruler">
-            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => <span key={ratio} style={{ left: `${ratio * 100}%` }}>{formatClock(timelineDuration * ratio)}</span>)}
+            {[0, 0.5, 1].map((ratio) => <span key={ratio} style={{ left: `${ratio * 100}%` }}>{formatClock(timelineDuration * ratio)}</span>)}
           </div>
           <div
             className="timeline-track"

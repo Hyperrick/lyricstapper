@@ -1,4 +1,4 @@
-export type HighlightMode = "none" | "text" | "background";
+export type HighlightMode = "none" | "text" | "wipe" | "background";
 
 export type CaptionStyle = {
   fontFamily: string;

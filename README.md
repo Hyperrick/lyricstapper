@@ -27,7 +27,7 @@ exist, the music provides the timing, and the creator stays in control.
 
 ## Local development
 
-Requirements: Node.js 22.13 or newer.
+Requirements: Node.js 22.23.2 or newer. Run `nvm use` to select the pinned local version.
 
 ```bash
 npm install

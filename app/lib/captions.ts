@@ -35,6 +35,12 @@ export function distributeWords(line: TimedLine): TimedWord[] {
   }));
 }
 
+export function wordProgress(word: TimedWord, time: number): number {
+  const duration = word.end - word.start;
+  if (duration <= 0) return time >= word.end ? 1 : 0;
+  return Math.max(0, Math.min(1, (time - word.start) / duration));
+}
+
 export function wordsFromBoundaries(text: string, boundaries: number[], end: number): TimedWord[] | undefined {
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length < 2 || boundaries.length < 2) return undefined;
@@ -114,8 +120,9 @@ export function toAss(lines: TimedLine[], videoWidth = 720, videoHeight = 1280, 
   const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nScaledBorderAndShadow: yes\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Lyric,${style.fontFamily},${fontSize},${assColor(activeColor)},${assColor(style.textColor)},${assColor("#090a0d")},${assColor(style.backgroundColor, backgroundAlpha)},${style.fontWeight >= 700 ? -1 : 0},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},2,${sideMargin},${sideMargin},${bottomMargin},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
   const events = completed(lines).map((line) => {
     const words = distributeWords(line);
+    const karaokeTag = style.highlightMode === "wipe" ? "\\kf" : "\\k";
     const karaoke = words
-      .map((word) => `{\\kf${Math.max(1, Math.round((word.end - word.start) * 100))}}${assEscape(style.uppercase ? word.word.toUpperCase() : word.word)}`)
+      .map((word) => `{${karaokeTag}${Math.max(1, Math.round((word.end - word.start) * 100))}}${assEscape(style.uppercase ? word.word.toUpperCase() : word.word)}`)
       .join(" ");
     return `Dialogue: 0,${assTime(line.start!)},${assTime(line.end!)},Lyric,,0,0,0,,{\\fad(120,140)}${karaoke}`;
   });

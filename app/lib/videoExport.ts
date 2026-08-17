@@ -1,4 +1,4 @@
-import { distributeWords, TimedLine, TimedWord } from "./captions";
+import { distributeWords, TimedLine, TimedWord, wordProgress } from "./captions";
 import { CaptionStyle, colorWithOpacity } from "./captionStyle";
 
 type RenderWord = TimedWord & { width: number };
@@ -95,6 +95,15 @@ function drawCaption(ctx: OffscreenCanvasRenderingContext2D, lines: TimedLine[],
           : absoluteIndex < activeIndex ? colorWithOpacity(style.textColor, style.pastOpacity) : style.textColor;
       ctx.fillText(word.word, x, y);
       ctx.restore();
+      if (isActive && style.highlightMode === "wipe") {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y - fontSize, word.width * wordProgress(word, time), lineHeight);
+        ctx.clip();
+        ctx.fillStyle = style.highlightColor;
+        ctx.fillText(word.word, x, y);
+        ctx.restore();
+      }
       x += word.width + spaceWidth;
       absoluteIndex += 1;
     });
