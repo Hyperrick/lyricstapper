@@ -1,16 +1,27 @@
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { NumberInput } from "@astryxdesign/core/NumberInput";
+import { useEffect, useRef } from "react";
 import { formatClock, TimedLine } from "../../lib/captions";
+import { CaptionTextEditor } from "./CaptionTextEditor";
 
 type CaptionPanelProps = {
   lines: TimedLine[];
   activeIndex: number;
+  markingLineIndex: number | null;
   duration: number;
   onSelectLine: (index: number) => void;
+  onUpdateText: (index: number, value: string) => void;
   onUpdateEnd: (index: number, value: number | null) => void;
 };
 
-export function CaptionPanel({ lines, activeIndex, duration, onSelectLine, onUpdateEnd }: CaptionPanelProps) {
+export function CaptionPanel({ lines, activeIndex, markingLineIndex, duration, onSelectLine, onUpdateText, onUpdateEnd }: CaptionPanelProps) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    listRef.current?.querySelector<HTMLElement>(`[data-caption-index="${activeIndex}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
   if (!lines.length) {
     return (
       <div className="tool-panel-content empty-tool">
@@ -24,17 +35,26 @@ export function CaptionPanel({ lines, activeIndex, duration, onSelectLine, onUpd
     );
   }
 
+  const selectedIndex = Math.min(Math.max(activeIndex, 0), lines.length - 1);
+  const selectedLine = lines[selectedIndex];
+
   return (
     <div className="tool-panel-content caption-tool">
+      <CaptionTextEditor
+        key={`${selectedLine.id}:${selectedLine.text}`}
+        line={selectedLine}
+        lineNumber={selectedIndex + 1}
+        onSave={(text) => onUpdateText(selectedIndex, text)}
+      />
       <div className="caption-list-summary">
         <span>{lines.filter((line) => line.end !== null).length} of {lines.length} timed</span>
         <span>{formatClock(duration)}</span>
       </div>
-      <div className="caption-line-list" role="list" aria-label="Caption lines">
+      <div className="caption-line-list" ref={listRef} role="list" aria-label="Caption lines">
         {lines.map((line, index) => {
           const isDone = line.start !== null && line.end !== null;
           return (
-            <div className={`caption-line-row ${index === activeIndex ? "is-active" : ""}`} key={line.id} role="listitem">
+            <div className={`caption-line-row ${index === activeIndex ? "is-active" : ""} ${index === markingLineIndex ? "is-marking" : ""}`} data-caption-index={index} key={line.id} role="listitem">
               <button className="caption-line-select" type="button" onClick={() => onSelectLine(index)}>
                 <span className={`line-state ${isDone ? "is-done" : ""}`}>{isDone ? "✓" : String(index + 1).padStart(2, "0")}</span>
                 <span className="line-copy">

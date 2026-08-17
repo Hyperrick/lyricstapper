@@ -1,13 +1,14 @@
 "use client";
 
 import { AppShell } from "@astryxdesign/core/AppShell";
-import { Banner, BannerStatus } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
+import { useToast } from "@astryxdesign/core/Toast";
 import { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { distributeWords, downloadText, importCaptionFile, parseLyrics, TimedLine, toAss, toJson, toSrt } from "../lib/captions";
+import { captionSourceText, distributeWords, downloadText, importCaptionFile, parseLyrics, replaceTimedLineText, TimedLine, toAss, toJson, toSrt } from "../lib/captions";
 import { DEFAULT_CAPTION_STYLE, normalizeCaptionStyle, CaptionStyle } from "../lib/captionStyle";
-import { parseProject, ProjectMedia, serializeProject } from "../lib/projectFile";
-import { chooseRememberedMedia, recallMedia, rememberMedia } from "../lib/mediaLibrary";
+import { parseProject, projectFingerprint, ProjectMedia, serializeProject } from "../lib/projectFile";
+import { chooseProjectFile, findProjectMedia, LocalProjectFileHandle, overwriteProjectFile, saveProjectInDirectory } from "../lib/projectDirectory";
+import { chooseRememberedMedia, recallMedia, rememberMedia, supportsRememberedMedia } from "../lib/mediaLibrary";
 import { downloadBlob, renderCaptionedMp4 } from "../lib/videoExport";
 import { CaptionStylePanel } from "./CaptionStylePanel";
 import { CaptionPanel } from "./editor/CaptionPanel";
@@ -16,6 +17,7 @@ import { ExportPanel } from "./editor/ExportPanel";
 import { EditorMode, MediaElement, MediaStage } from "./editor/MediaStage";
 import { ShortcutDialog } from "./editor/ShortcutDialog";
 import { SourcePanel } from "./editor/SourcePanel";
+import { UnsavedChangesDialog } from "./editor/UnsavedChangesDialog";
 import { WorkspaceTabs } from "./editor/WorkspaceTabs";
 import { WorkspaceTask, WORKSPACE_TASK_DETAILS } from "./editor/workspace";
 
@@ -24,9 +26,23 @@ type TimingSnapshot = { lines: TimedLine[]; activeIndex: number; time: number };
 export function LyricTimestamper() {
   const mediaRef = useRef<MediaElement | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const projectInputRef = useRef<HTMLInputElement | null>(null);
+  const projectFileHandleRef = useRef<LocalProjectFileHandle | null>(null);
+  const projectDirectoryIdRef = useRef<string | undefined>(undefined);
   const playerRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<TimingSnapshot[]>([]);
   const holdingLineRef = useRef<number | null>(null);
+  const toast = useToast();
+  const showNotice = useCallback((message: string) => {
+    if (!message) return;
+    toast({
+      body: message,
+      type: /failed|could not|error/i.test(message) ? "error" : "info",
+      isAutoHide: true,
+      autoHideDuration: 4000,
+      uniqueID: "lyricstapper-notice",
+    });
+  }, [toast]);
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaName, setMediaName] = useState("");
@@ -35,20 +51,41 @@ export function LyricTimestamper() {
   const [lyricsRows, setLyricsRows] = useState<string[]>([]);
   const [lines, setLines] = useState<TimedLine[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [markingLineIndex, setMarkingLineIndex] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoSize, setVideoSize] = useState({ width: 720, height: 1280 });
   const [playerSize, setPlayerSize] = useState({ width: 0, height: 0 });
   const [selectedLineIndex, setSelectedLineIndex] = useState<number | null>(null);
-  const [notice, setNotice] = useState("");
   const [renderProgress, setRenderProgress] = useState<number | null>(null);
   const [mode, setMode] = useState<EditorMode>("tag");
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE);
   const [activeTask, setActiveTask] = useState<WorkspaceTask>("source");
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
+  const [isUnsavedDialogOpen, setIsUnsavedDialogOpen] = useState(false);
+  const [savedProjectFingerprint, setSavedProjectFingerprint] = useState("");
   const [inspectorWidth, setInspectorWidth] = useState(380);
+
+  const currentProjectMedia = useMemo<ProjectMedia>(() => ({
+    name: mediaName,
+    duration,
+    width: videoSize.width,
+    height: videoSize.height,
+    size: mediaFile?.size ?? projectMediaReference?.size,
+    lastModified: mediaFile?.lastModified ?? projectMediaReference?.lastModified,
+  }), [duration, mediaFile, mediaName, projectMediaReference, videoSize]);
+  const currentProjectFingerprint = useMemo(
+    () => projectFingerprint(lines, captionStyle, currentProjectMedia),
+    [captionStyle, currentProjectMedia, lines],
+  );
+  const hasUnpreparedLyrics = useMemo(() => {
+    const sourceLines = lyricsRows.map((row) => row.trim()).filter((row) => row && !/^\[.+\]$/.test(row));
+    return sourceLines.length !== lines.length || sourceLines.some((row, index) => row !== captionSourceText(lines[index]?.text ?? ""));
+  }, [lines, lyricsRows]);
+  const hasUnsavedChanges = hasUnpreparedLyrics
+    || (lines.length > 0 && currentProjectFingerprint !== savedProjectFingerprint);
 
   const completedCount = lines.filter((line) => line.end !== null).length;
   const activeLine = activeIndex >= 0 ? lines[activeIndex] : null;
@@ -77,6 +114,7 @@ export function LyricTimestamper() {
   const loadLyrics = useCallback(() => {
     const parsed = parseLyrics(lyricsRows.join("\n"));
     setLines(parsed);
+    setLyricsRows(parsed.map((line) => line.text));
     setActiveIndex(parsed.length ? 0 : -1);
     setSelectedLineIndex(null);
     historyRef.current = [];
@@ -89,9 +127,9 @@ export function LyricTimestamper() {
   const playMedia = useCallback((media: MediaElement) => {
     void media.play().catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setNotice(error instanceof Error ? error.message : "Playback could not be started.");
+      showNotice(error instanceof Error ? error.message : "Playback could not be started.");
     });
-  }, []);
+  }, [showNotice]);
 
   const beginHeldLine = useCallback(() => {
     const media = mediaRef.current;
@@ -99,6 +137,9 @@ export function LyricTimestamper() {
     const time = Math.max(0, media.currentTime);
     historyRef.current.push({ lines, activeIndex, time });
     holdingLineRef.current = activeIndex;
+    setActiveTask("captions");
+    setIsInspectorOpen(true);
+    setMarkingLineIndex(activeIndex);
     setLines((previous) => previous.map((line, index) => {
       if (index === activeIndex) return { ...line, start: time, end: null, words: undefined };
       return line;
@@ -111,6 +152,7 @@ export function LyricTimestamper() {
     if (!media || lineIndex === null) return;
     const time = Math.max(0, media.currentTime);
     holdingLineRef.current = null;
+    setMarkingLineIndex(null);
     setLines((previous) => previous.map((line, index) => index === lineIndex && line.start !== null
       ? { ...line, end: Math.max(time, line.start + 0.05), words: undefined }
       : line));
@@ -121,6 +163,7 @@ export function LyricTimestamper() {
     const snapshot = historyRef.current.pop();
     if (!snapshot) return;
     holdingLineRef.current = null;
+    setMarkingLineIndex(null);
     setLines(snapshot.lines);
     setActiveIndex(snapshot.activeIndex);
     if (mediaRef.current) mediaRef.current.currentTime = snapshot.time;
@@ -131,6 +174,9 @@ export function LyricTimestamper() {
       if (holdingLineRef.current !== null) endHeldLine();
       mediaRef.current?.pause();
       const firstCompleted = lines.findIndex((line) => line.start !== null && line.end !== null);
+      setActiveTask("captions");
+      setIsInspectorOpen(true);
+      if (firstCompleted !== -1) setActiveIndex(firstCompleted);
       setSelectedLineIndex(firstCompleted === -1 ? null : firstCompleted);
     } else {
       setSelectedLineIndex(null);
@@ -174,7 +220,7 @@ export function LyricTimestamper() {
         else mediaRef.current.pause();
       } else if ((event.code === "ArrowLeft" || event.code === "ArrowRight") && mediaRef.current) {
         event.preventDefault();
-        mediaRef.current.currentTime += event.code === "ArrowLeft" ? -0.1 : 0.1;
+        mediaRef.current.currentTime += event.code === "ArrowLeft" ? -0.5 : 0.5;
       }
     };
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -185,15 +231,27 @@ export function LyricTimestamper() {
     };
     window.addEventListener("keydown", handleKey);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", endHeldLine);
     return () => {
       window.removeEventListener("keydown", handleKey);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", endHeldLine);
     };
   }, [beginHeldLine, endHeldLine, mode, playMedia, undoMarker]);
 
   useEffect(() => () => {
     if (mediaUrl) URL.revokeObjectURL(mediaUrl);
   }, [mediaUrl]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     const player = playerRef.current;
@@ -263,8 +321,13 @@ export function LyricTimestamper() {
       loadMediaFile(selected.file);
       if (selected.handle) await rememberMedia(selected.file, selected.handle);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "The media file could not be opened.");
+      showNotice(error instanceof Error ? error.message : "The media file could not be opened.");
     }
+  }
+
+  function openMediaPicker() {
+    if (supportsRememberedMedia()) void chooseMedia();
+    else mediaInputRef.current?.click();
   }
 
   function connectLoadedMedia(actualDuration: number, width?: number, height?: number) {
@@ -273,7 +336,7 @@ export function LyricTimestamper() {
     if (!projectMediaReference) return;
     const nameMatches = mediaName === projectMediaReference.name;
     const durationMatches = Math.abs(actualDuration - projectMediaReference.duration) < 0.25;
-    setNotice(nameMatches && durationMatches
+    showNotice(nameMatches && durationMatches
       ? "Project and media connected."
       : `Media connected, but ${!nameMatches ? "the filename" : "the duration"} differs from the saved project. Check the timing before export.`);
     setProjectMediaReference(null);
@@ -281,6 +344,7 @@ export function LyricTimestamper() {
 
   async function applyProject(content: string) {
     const project = parseProject(content);
+    projectDirectoryIdRef.current = project.sourceDirectoryId;
     if (mediaUrl) URL.revokeObjectURL(mediaUrl);
     setMediaUrl("");
     setMediaFile(null);
@@ -291,7 +355,7 @@ export function LyricTimestamper() {
     setDuration(project.media.duration);
     setVideoSize({ width: project.media.width, height: project.media.height });
     setLines(project.captions);
-    setLyricsRows(project.lyrics.length ? project.lyrics : project.captions.map((line) => line.text));
+    setLyricsRows((project.lyrics.length ? project.lyrics : project.captions.map((line) => line.text)).map(captionSourceText));
     setCaptionStyle(project.captionStyle);
     window.localStorage.setItem("lyricstapper-caption-style", JSON.stringify(project.captionStyle));
     setActiveIndex(project.captions.length ? 0 : -1);
@@ -300,63 +364,88 @@ export function LyricTimestamper() {
     setActiveTask("captions");
     setIsInspectorOpen(true);
     historyRef.current = [];
+    setSavedProjectFingerprint(projectFingerprint(project.captions, project.captionStyle, project.media));
     const rememberedMedia = await recallMedia(project.media).catch(() => null);
     if (rememberedMedia) {
       loadMediaFile(rememberedMedia);
-      setNotice("Project loaded. Reconnecting remembered media…");
-    } else {
-      setNotice(`Project loaded. Select ${project.media.name} once to remember it for future sessions.`);
+      return;
     }
-  }
-
-  async function loadProjectFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      await applyProject(await file.text());
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Project import failed.");
-    } finally {
-      event.target.value = "";
+    const directoryMedia = project.sourceDirectoryId
+      ? await findProjectMedia(project.sourceDirectoryId, project.media).catch(() => null)
+      : null;
+    if (directoryMedia && window.confirm(`Found ${project.media.name} in the saved project folder. Connect it now?`)) {
+      loadMediaFile(directoryMedia);
+      return;
     }
   }
 
   async function loadCaptionImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    projectFileHandleRef.current = null;
+    await importFile(file);
+    event.target.value = "";
+  }
+
+  async function importFile(file: File): Promise<boolean> {
     try {
       const content = await file.text();
       if (/\.(?:lyricstapper|beatmark)\.json$/i.test(file.name) || /"format"\s*:\s*"(?:lyricstapper|beatmark)-project"/.test(content)) {
         await applyProject(content);
-        return;
+        return true;
       }
       const imported = importCaptionFile(file.name, content);
       if (!imported.length) throw new Error("The file contains no usable captions.");
       setLines(imported);
+      setSavedProjectFingerprint("");
+      projectDirectoryIdRef.current = undefined;
       setLyricsRows(imported.map((line) => line.text));
       setActiveIndex(0);
       setSelectedLineIndex(null);
       historyRef.current = [];
       setActiveTask("captions");
       setIsInspectorOpen(true);
-      setNotice(`${imported.length} lines imported from ${file.name}`);
+      showNotice(`${imported.length} lines imported from ${file.name}`);
+      return false;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Import failed.");
-    } finally {
-      event.target.value = "";
+      showNotice(error instanceof Error ? error.message : "Import failed.");
+      return false;
     }
+  }
+
+  async function openProjectPicker() {
+    try {
+      const result = await chooseProjectFile();
+      if (result.status === "unsupported") {
+        projectInputRef.current?.click();
+        return;
+      }
+      if (result.status !== "selected") return;
+      const isProject = await importFile(result.file);
+      projectFileHandleRef.current = isProject ? result.handle : null;
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "The project could not be opened.");
+    }
+  }
+
+  function requestOpenProject() {
+    if (hasUnsavedChanges) {
+      setIsUnsavedDialogOpen(true);
+      return;
+    }
+    void openProjectPicker();
   }
 
   async function exportMp4() {
     if (!mediaFile || !isVideo) return;
     try {
-      setNotice("Rendering MP4…");
+      showNotice("Rendering MP4…");
       setRenderProgress(0);
       const blob = await renderCaptionedMp4(mediaFile, lines, captionStyle, setRenderProgress);
       downloadBlob(`${baseName}-captioned.mp4`, blob);
-      setNotice("MP4 saved.");
+      showNotice("MP4 saved.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "MP4 export failed.");
+      showNotice(error instanceof Error ? error.message : "MP4 export failed.");
     } finally {
       setRenderProgress(null);
     }
@@ -391,21 +480,64 @@ export function LyricTimestamper() {
 
   function seekMedia(time: number) {
     if (mediaRef.current) mediaRef.current.currentTime = time;
+    syncTimelineTime(time);
+  }
+
+  function syncTimelineTime(time: number) {
+    setCurrentTime(time);
+    if (mode !== "edit") return;
+    const lineIndex = lines.findIndex((line) => line.start !== null && line.end !== null && time >= line.start && time < line.end);
+    if (lineIndex === -1) return;
+    setActiveIndex(lineIndex);
+    setSelectedLineIndex(lineIndex);
   }
 
   function updateTimelineLine(index: number, updatedLine: TimedLine) {
     setLines((previous) => previous.map((line, lineIndex) => lineIndex === index ? updatedLine : line));
   }
 
-  function exportProject() {
-    downloadText(`${baseName}.lyricstapper.json`, serializeProject(lines, captionStyle, {
-      name: mediaName,
-      duration,
-      width: videoSize.width,
-      height: videoSize.height,
-      size: mediaFile?.size,
-      lastModified: mediaFile?.lastModified,
-    }), "application/json");
+  function updateCaptionText(index: number, text: string) {
+    const line = lines[index];
+    if (!line || !text.trim()) return;
+    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    const preservesWordTiming = distributeWords(line).length === wordCount;
+    setLines((previous) => previous.map((currentLine, lineIndex) => lineIndex === index ? replaceTimedLineText(currentLine, text) : currentLine));
+    setLyricsRows((previous) => previous.map((row, rowIndex) => rowIndex === index ? captionSourceText(text) : row));
+    showNotice(preservesWordTiming
+      ? "Caption text saved. Word timing was preserved."
+      : "Caption text saved. Word timing for this line was redistributed.");
+  }
+
+  function updatePreviewCaptionText(lineId: string, text: string) {
+    const index = lines.findIndex((line) => line.id === lineId);
+    if (index !== -1) updateCaptionText(index, text);
+  }
+
+  async function exportProject() {
+    const filename = `${baseName}.lyricstapper.json`;
+    const media = currentProjectMedia;
+    try {
+      if (projectFileHandleRef.current) {
+        await overwriteProjectFile(projectFileHandleRef.current, serializeProject(lines, captionStyle, media, projectDirectoryIdRef.current));
+        setSavedProjectFingerprint(currentProjectFingerprint);
+        showNotice("Project saved.");
+        return;
+      }
+      const result = await saveProjectInDirectory(filename, (directoryId) => serializeProject(lines, captionStyle, media, directoryId));
+      if (result.status === "saved") {
+        projectFileHandleRef.current = result.fileHandle;
+        projectDirectoryIdRef.current = result.directoryId;
+        setSavedProjectFingerprint(currentProjectFingerprint);
+        showNotice("Project saved. Its folder will be checked for the source media when reopened.");
+        return;
+      }
+      if (result.status === "cancelled") return;
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "The project folder could not be saved.");
+      return;
+    }
+    downloadText(filename, serializeProject(lines, captionStyle, media), "application/json");
+    setSavedProjectFingerprint(currentProjectFingerprint);
   }
 
   function exportAss() {
@@ -426,14 +558,6 @@ export function LyricTimestamper() {
   }
 
   const taskDetails = WORKSPACE_TASK_DETAILS[activeTask];
-  const noticeStatus: BannerStatus = /failed|could not/i.test(notice)
-    ? "error"
-    : /differs|check the timing/i.test(notice)
-      ? "warning"
-      : /saved|connected|imported/i.test(notice)
-        ? "success"
-        : "info";
-
   return (
     <AppShell
       className="app-shell"
@@ -441,8 +565,9 @@ export function LyricTimestamper() {
       height="fill"
       mobileNav={false}
       variant="section"
-      topNav={<EditorHeader activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onTaskChange={openTask} onShowShortcuts={() => setIsShortcutDialogOpen(true)} />}
+      topNav={<EditorHeader activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onTaskChange={openTask} onOpenProject={requestOpenProject} onSaveProject={() => { void exportProject(); }} onShowShortcuts={() => setIsShortcutDialogOpen(true)} />}
     >
+      <input className="visually-hidden-input" ref={projectInputRef} type="file" accept=".json,.srt,.ass" onChange={loadCaptionImport} />
       <section className="workspace" data-inspector-open={isInspectorOpen} style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}>
         <MediaStage
           activeTask={activeTask}
@@ -465,16 +590,17 @@ export function LyricTimestamper() {
           onMediaElement={(element) => { mediaRef.current = element; }}
           onModeChange={switchMode}
           onBeginSession={beginSession}
-          onBeginHeldLine={beginHeldLine}
-          onEndHeldLine={endHeldLine}
           onUndoMarker={undoMarker}
-          onTimeChange={setCurrentTime}
+          onTimeChange={syncTimelineTime}
           onMetadata={connectLoadedMedia}
           onPlayingChange={setIsPlaying}
           onSelectLine={selectTimelineLine}
           onSeek={seekMedia}
           onLineChange={updateTimelineLine}
-          onOpenSource={() => openTask("source")}
+          onCaptionTextChange={updatePreviewCaptionText}
+          onCaptionStyleChange={updateCaptionStyle}
+          sourceActionLabel={projectMediaReference ? `Reconnect ${projectMediaReference.name}` : "Open Source"}
+          onOpenSource={projectMediaReference ? openMediaPicker : () => openTask("source")}
         />
         {isInspectorOpen && <button className="inspector-scrim" type="button" aria-label="Close editor tool" onClick={() => setIsInspectorOpen(false)} />}
         <aside className="tool-inspector" aria-label={taskDetails.title} aria-hidden={!isInspectorOpen}>
@@ -488,22 +614,20 @@ export function LyricTimestamper() {
             <Button label="Close editor tool" variant="ghost" isIconOnly icon={<span aria-hidden="true">×</span>} onClick={() => setIsInspectorOpen(false)} />
           </header>
           <div className="inspector-scroll">
-            {notice && <div className="editor-notice"><Banner status={noticeStatus} title={notice} isDismissable onDismiss={() => setNotice("")} /></div>}
             {activeTask === "source" && (
               <SourcePanel
                 mediaInputRef={mediaInputRef}
                 mediaName={mediaName}
                 projectMediaReference={projectMediaReference}
                 lyricsRows={lyricsRows}
-                onChooseMedia={() => { void chooseMedia(); }}
+                preparedLyrics={lines.map((line) => captionSourceText(line.text))}
+                onChooseMedia={openMediaPicker}
                 onLoadMedia={loadMedia}
                 onLyricsChange={setLyricsRows}
                 onPrepareLyrics={loadLyrics}
-                onLoadProject={loadProjectFile}
-                onImportCaptions={loadCaptionImport}
               />
             )}
-            {activeTask === "captions" && <CaptionPanel lines={lines} activeIndex={activeIndex} duration={duration} onSelectLine={selectCaptionLine} onUpdateEnd={updateEnd} />}
+            {activeTask === "captions" && <CaptionPanel lines={lines} activeIndex={activeIndex} markingLineIndex={markingLineIndex} duration={duration} onSelectLine={selectCaptionLine} onUpdateText={updateCaptionText} onUpdateEnd={updateEnd} />}
             {activeTask === "style" && <CaptionStylePanel value={captionStyle} onChange={updateCaptionStyle} />}
             {activeTask === "export" && (
               <ExportPanel
@@ -511,7 +635,6 @@ export function LyricTimestamper() {
                 completedCount={completedCount}
                 canExportMp4={Boolean(mediaFile && isVideo)}
                 renderProgress={renderProgress}
-                onExportProject={exportProject}
                 onExportAss={exportAss}
                 onExportSrt={exportSrt}
                 onExportJson={exportJson}
@@ -525,6 +648,14 @@ export function LyricTimestamper() {
         <WorkspaceTabs activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onChange={openTask} layout="fill" />
       </nav>
       <ShortcutDialog isOpen={isShortcutDialogOpen} onOpenChange={setIsShortcutDialogOpen} />
+      <UnsavedChangesDialog
+        isOpen={isUnsavedDialogOpen}
+        onCancel={() => setIsUnsavedDialogOpen(false)}
+        onContinue={() => {
+          setIsUnsavedDialogOpen(false);
+          void openProjectPicker();
+        }}
+      />
     </AppShell>
   );
 }

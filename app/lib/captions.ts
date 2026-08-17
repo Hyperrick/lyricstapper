@@ -14,6 +14,20 @@ export type TimedWord = {
   end: number;
 };
 
+export function captionSourceText(text: string): string {
+  return text.replace(/\s*\r?\n\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function forcedLineBreakWordIndexes(text: string): Set<number> {
+  const indexes = new Set<number>();
+  let wordCount = 0;
+  text.split(/\r?\n/).forEach((row, rowIndex) => {
+    if (rowIndex > 0 && row.trim() && wordCount > 0) indexes.add(wordCount);
+    wordCount += row.split(/\s+/).filter(Boolean).length;
+  });
+  return indexes;
+}
+
 export function parseLyrics(value: string): TimedLine[] {
   return value
     .split(/\r?\n/)
@@ -33,6 +47,19 @@ export function distributeWords(line: TimedLine): TimedWord[] {
     start: line.start! + duration * index,
     end: index === words.length - 1 ? line.end! : line.start! + duration * (index + 1),
   }));
+}
+
+export function replaceTimedLineText(line: TimedLine, text: string): TimedLine {
+  const words = text.split(/\s+/).filter(Boolean);
+  const timedWords = distributeWords(line);
+
+  return {
+    ...line,
+    text,
+    words: timedWords.length === words.length
+      ? timedWords.map((timedWord, index) => ({ ...timedWord, word: words[index] }))
+      : undefined,
+  };
 }
 
 export function wordProgress(word: TimedWord, time: number): number {
@@ -110,8 +137,10 @@ export function toAss(lines: TimedLine[], videoWidth = 720, videoHeight = 1280, 
   const width = Math.max(1, Math.round(videoWidth));
   const height = Math.max(1, Math.round(videoHeight));
   const fontSize = Math.max(18, Math.round(height * style.fontSizePercent / 100));
-  const sideMargin = Math.max(24, Math.round(width * 0.08));
+  const sideMargin = Math.max(0, Math.round(width * (100 - style.maxWidthPercent) / 200));
   const bottomMargin = Math.max(20, Math.round(height * style.bottomPercent / 100));
+  const positionX = Math.round(width * style.centerXPercent / 100);
+  const positionY = Math.round(height * (1 - style.bottomPercent / 100));
   const outline = style.outline ? Math.max(2, Math.round(height * 0.004)) : 0;
   const shadow = style.shadow ? Math.max(1, Math.round(height * 0.002)) : 0;
   const activeColor = style.highlightMode === "none" ? style.textColor : style.highlightColor;
@@ -120,11 +149,12 @@ export function toAss(lines: TimedLine[], videoWidth = 720, videoHeight = 1280, 
   const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nScaledBorderAndShadow: yes\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Lyric,${style.fontFamily},${fontSize},${assColor(activeColor)},${assColor(style.textColor)},${assColor("#090a0d")},${assColor(style.backgroundColor, backgroundAlpha)},${style.fontWeight >= 700 ? -1 : 0},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},2,${sideMargin},${sideMargin},${bottomMargin},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
   const events = completed(lines).map((line) => {
     const words = distributeWords(line);
+    const forcedBreaks = forcedLineBreakWordIndexes(line.text);
     const karaokeTag = style.highlightMode === "wipe" ? "\\kf" : "\\k";
     const karaoke = words
-      .map((word) => `{${karaokeTag}${Math.max(1, Math.round((word.end - word.start) * 100))}}${assEscape(style.uppercase ? word.word.toUpperCase() : word.word)}`)
-      .join(" ");
-    return `Dialogue: 0,${assTime(line.start!)},${assTime(line.end!)},Lyric,,0,0,0,,{\\fad(120,140)}${karaoke}`;
+      .map((word, index) => `{${karaokeTag}${Math.max(1, Math.round((word.end - word.start) * 100))}}${index === 0 ? "" : forcedBreaks.has(index) ? "\\N" : " "}${assEscape(style.uppercase ? word.word.toUpperCase() : word.word)}`)
+      .join("");
+    return `Dialogue: 0,${assTime(line.start!)},${assTime(line.end!)},Lyric,,0,0,0,,{\\an2\\pos(${positionX},${positionY})\\fad(120,140)}${karaoke}`;
   });
   return header + events.join("\n") + "\n";
 }
@@ -171,7 +201,7 @@ export function importCaptionFile(filename: string, content: string): TimedLine[
       const timingIndex = rows.findIndex((row) => row.includes("-->"));
       if (timingIndex === -1) return [];
       const [startText, endText] = rows[timingIndex].split("-->");
-      const text = rows.slice(timingIndex + 1).join(" ").replace(/<[^>]+>/g, "").trim();
+      const text = rows.slice(timingIndex + 1).join("\n").replace(/<[^>]+>/g, "").trim();
       return text ? [importedLine(text, parseSrtTime(startText), parseSrtTime(endText), index)] : [];
     });
   }
@@ -183,16 +213,24 @@ export function importCaptionFile(filename: string, content: string): TimedLine[
       const end = parseAssTime(fields[2] ?? "0:00:00.00");
       const assText = fields.slice(9).join(",");
       const words: TimedWord[] = [];
+      const wordRows: string[][] = [[]];
       let cursor = start;
       const karaokePattern = /\{\\k(?:f|o)?(\d+)\}([^{}]*)/gi;
       let match: RegExpExecArray | null;
       while ((match = karaokePattern.exec(assText))) {
+        const hasLineBreak = /\\N/.test(match[2]);
         const word = match[2].replace(/\\[Nn]/g, " ").trim();
         const wordEnd = cursor + Number(match[1]) / 100;
-        if (word) words.push({ word, start: cursor, end: wordEnd });
+        if (word) {
+          if (hasLineBreak && wordRows[wordRows.length - 1].length) wordRows.push([]);
+          wordRows[wordRows.length - 1].push(word);
+          words.push({ word, start: cursor, end: wordEnd });
+        }
         cursor = wordEnd;
       }
-      const text = (words.length ? words.map((word) => word.word).join(" ") : assText.replace(/\{[^}]*\}/g, "").replace(/\\[Nn]/g, " ")).trim();
+      const text = (words.length
+        ? wordRows.map((wordsInRow) => wordsInRow.join(" ")).join("\n")
+        : assText.replace(/\{[^}]*\}/g, "").replace(/\\N/g, "\n").replace(/\\n/g, " ")).trim();
       return importedLine(text, start, end, index, words.length ? words : undefined);
     }).filter((line) => line.text);
   }

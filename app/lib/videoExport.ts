@@ -1,4 +1,4 @@
-import { distributeWords, TimedLine, TimedWord, wordProgress } from "./captions";
+import { distributeWords, forcedLineBreakWordIndexes, TimedLine, TimedWord, wordProgress } from "./captions";
 import { CaptionStyle, colorWithOpacity } from "./captionStyle";
 
 type RenderWord = TimedWord & { width: number };
@@ -7,21 +7,21 @@ function activeCaption(lines: TimedLine[], time: number): TimedLine | undefined 
   return lines.find((line) => line.start !== null && line.end !== null && time >= line.start && time < line.end);
 }
 
-function wrapWords(ctx: OffscreenCanvasRenderingContext2D, words: TimedWord[], maxWidth: number): RenderWord[][] {
+function wrapWords(ctx: OffscreenCanvasRenderingContext2D, words: TimedWord[], maxWidth: number, forcedBreaks: Set<number>): RenderWord[][] {
   const spaceWidth = ctx.measureText(" ").width;
   const rows: RenderWord[][] = [];
   let row: RenderWord[] = [];
   let rowWidth = 0;
-  for (const word of words) {
+  words.forEach((word, index) => {
     const width = ctx.measureText(word.word).width;
-    if (row.length && rowWidth + spaceWidth + width > maxWidth) {
+    if (row.length && (forcedBreaks.has(index) || rowWidth + spaceWidth + width > maxWidth)) {
       rows.push(row);
       row = [];
       rowWidth = 0;
     }
     row.push({ ...word, width });
     rowWidth += (row.length > 1 ? spaceWidth : 0) + width;
-  }
+  });
   if (row.length) rows.push(row);
   return rows;
 }
@@ -48,19 +48,25 @@ function drawCaption(ctx: OffscreenCanvasRenderingContext2D, lines: TimedLine[],
   ctx.lineWidth = style.outline ? Math.max(2, height * 0.0045) : 0;
   ctx.strokeStyle = "#090a0d";
 
-  const rows = wrapWords(ctx, words, width * 0.84);
+  const rows = wrapWords(ctx, words, width * style.maxWidthPercent / 100, forcedLineBreakWordIndexes(caption.text));
   const spaceWidth = ctx.measureText(" ").width;
-  const firstBaseline = height * (1 - style.bottomPercent / 100) - (rows.length - 1) * lineHeight;
+  const centerX = width * style.centerXPercent / 100;
+  const fontMetrics = ctx.measureText("Mg");
+  const ascent = fontMetrics.actualBoundingBoxAscent || fontSize * 0.82;
+  const descent = fontMetrics.actualBoundingBoxDescent || fontSize * 0.22;
+  const paddingY = style.captionBackground ? fontSize * 0.2 : 0;
+  const captionBottom = height * (1 - style.bottomPercent / 100);
+  const lastBaseline = captionBottom - descent - paddingY;
+  const firstBaseline = lastBaseline - (rows.length - 1) * lineHeight;
   const rowWidths = rows.map((row) => row.reduce((total, word, index) => total + word.width + (index ? spaceWidth : 0), 0));
   if (style.captionBackground) {
     const paddingX = fontSize * 0.32;
-    const paddingY = fontSize * 0.2;
     const widestRow = Math.max(...rowWidths);
-    const boxHeight = (rows.length - 1) * lineHeight + fontSize * 1.08 + paddingY * 2;
-    const boxY = firstBaseline - fontSize * 0.86 - paddingY;
+    const boxY = firstBaseline - ascent - paddingY;
+    const boxHeight = captionBottom - boxY;
     ctx.save();
     ctx.fillStyle = colorWithOpacity(style.backgroundColor, style.backgroundOpacity);
-    roundedRect(ctx, (width - widestRow) / 2 - paddingX, boxY, widestRow + paddingX * 2, boxHeight, fontSize * 0.18);
+    roundedRect(ctx, centerX - widestRow / 2 - paddingX, boxY, widestRow + paddingX * 2, boxHeight, fontSize * 0.18);
     ctx.fill();
     ctx.restore();
   }
@@ -69,7 +75,7 @@ function drawCaption(ctx: OffscreenCanvasRenderingContext2D, lines: TimedLine[],
   let absoluteIndex = 0;
   rows.forEach((row, rowIndex) => {
     const rowWidth = rowWidths[rowIndex];
-    let x = (width - rowWidth) / 2;
+    let x = centerX - rowWidth / 2;
     const y = firstBaseline + rowIndex * lineHeight;
     row.forEach((word) => {
       const isActive = absoluteIndex === activeIndex;
@@ -92,7 +98,9 @@ function drawCaption(ctx: OffscreenCanvasRenderingContext2D, lines: TimedLine[],
         ? style.highlightColor
         : isActive && style.highlightMode === "background"
           ? style.highlightTextColor
-          : absoluteIndex < activeIndex ? colorWithOpacity(style.textColor, style.pastOpacity) : style.textColor;
+          : style.highlightMode === "wipe" && absoluteIndex < activeIndex
+            ? style.highlightColor
+            : absoluteIndex < activeIndex ? colorWithOpacity(style.textColor, style.pastOpacity) : style.textColor;
       ctx.fillText(word.word, x, y);
       ctx.restore();
       if (isActive && style.highlightMode === "wipe") {

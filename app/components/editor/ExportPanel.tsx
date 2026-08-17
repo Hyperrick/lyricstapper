@@ -1,13 +1,11 @@
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
-import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 
 type ExportPanelProps = {
   lineCount: number;
   completedCount: number;
   canExportMp4: boolean;
   renderProgress: number | null;
-  onExportProject: () => void;
   onExportAss: () => void;
   onExportSrt: () => void;
   onExportJson: () => void;
@@ -19,7 +17,6 @@ export function ExportPanel({
   completedCount,
   canExportMp4,
   renderProgress,
-  onExportProject,
   onExportAss,
   onExportSrt,
   onExportJson,
@@ -27,6 +24,7 @@ export function ExportPanel({
 }: ExportPanelProps) {
   const hasCaptions = completedCount > 0;
   const allTimed = lineCount > 0 && completedCount === lineCount;
+  const renderPercentage = renderProgress === null ? 0 : Math.round(Math.min(1, Math.max(0, renderProgress)) * 100);
 
   return (
     <div className="tool-panel-content export-tool">
@@ -34,17 +32,9 @@ export function ExportPanel({
         <Banner
           status={hasCaptions ? "warning" : "info"}
           title={hasCaptions ? `${lineCount - completedCount} lines still need timing` : "Time at least one line to export captions"}
-          description="You can save the editable project at any point."
+          description="Finish timing every line for a complete caption export."
         />
       )}
-
-      <section className="tool-section export-section">
-        <div className="section-copy">
-          <strong>Editable project</strong>
-          <small>Save lyrics, timings, style, and the media reference for later.</small>
-        </div>
-        <Button label="Save Lyricstapper project" variant="primary" width="100%" isDisabled={!lineCount} onClick={onExportProject} />
-      </section>
 
       <section className="tool-section export-section">
         <div className="section-copy">
@@ -63,15 +53,32 @@ export function ExportPanel({
           <strong>Captioned video</strong>
           <small>{canExportMp4 ? "Render an MP4 locally in this browser." : "Choose a video source to enable MP4 export."}</small>
         </div>
-        {renderProgress !== null && <ProgressBar label="Rendering MP4" value={renderProgress} max={1} hasValueLabel />}
-        <Button
-          label="Export captioned MP4"
-          variant="secondary"
-          width="100%"
-          isDisabled={!canExportMp4 || !hasCaptions || renderProgress !== null}
-          isLoading={renderProgress !== null}
-          onClick={onExportMp4}
-        />
+        {renderProgress !== null ? (
+          <div
+            className="render-progress"
+            role="progressbar"
+            aria-label="Rendering MP4"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={renderPercentage}
+          >
+            <div className="render-progress-label">
+              <strong>Rendering MP4</strong>
+              <span>{renderPercentage}%</span>
+            </div>
+            <div className="render-progress-track" aria-hidden="true">
+              <span style={{ width: `${renderPercentage}%` }} />
+            </div>
+          </div>
+        ) : (
+          <Button
+            label="Export captioned MP4"
+            variant="secondary"
+            width="100%"
+            isDisabled={!canExportMp4 || !hasCaptions}
+            onClick={onExportMp4}
+          />
+        )}
       </section>
     </div>
   );

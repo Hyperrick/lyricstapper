@@ -1,4 +1,8 @@
 import type { Metadata } from "next";
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/league-spartan/wght.css";
+import "@fontsource-variable/lexend/wght.css";
+import "@fontsource-variable/montserrat/wght.css";
 import { AppThemeProvider } from "./components/AppThemeProvider";
 import "./globals.css";
 

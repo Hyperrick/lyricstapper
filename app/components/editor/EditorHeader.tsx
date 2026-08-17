@@ -10,10 +10,12 @@ type EditorHeaderProps = {
   completedCount: number;
   lineCount: number;
   onTaskChange: (task: WorkspaceTask) => void;
+  onOpenProject: () => void;
+  onSaveProject: () => void;
   onShowShortcuts: () => void;
 };
 
-export function EditorHeader({ activeTask, completedCount, lineCount, onTaskChange, onShowShortcuts }: EditorHeaderProps) {
+export function EditorHeader({ activeTask, completedCount, lineCount, onTaskChange, onOpenProject, onSaveProject, onShowShortcuts }: EditorHeaderProps) {
   const { mode, setMode } = useThemeMode();
 
   function cycleTheme() {
@@ -31,8 +33,10 @@ export function EditorHeader({ activeTask, completedCount, lineCount, onTaskChan
       endContent={(
         <div className="header-actions">
           <div className="progress-chip"><strong>{completedCount}</strong><span>/ {lineCount} lines</span></div>
-          <Button label="Keyboard shortcuts" variant="ghost" onClick={onShowShortcuts}>Shortcuts</Button>
-          <Button label={`${mode[0].toUpperCase()}${mode.slice(1)} theme. Change theme.`} variant="ghost" onClick={cycleTheme}>{mode === "system" ? "System" : mode === "light" ? "Light" : "Dark"}</Button>
+          <Button className="project-open-action" label="Open Lyricstapper project" variant="ghost" onClick={onOpenProject}>Open</Button>
+          <Button className="project-save-action" label="Save Lyricstapper project" variant="primary" isDisabled={!lineCount} onClick={onSaveProject}>Save</Button>
+          <Button className="header-shortcuts" label="Keyboard shortcuts" variant="ghost" onClick={onShowShortcuts}>Shortcuts</Button>
+          <Button className="header-theme" label={`${mode[0].toUpperCase()}${mode.slice(1)} theme. Change theme.`} variant="ghost" onClick={cycleTheme}>{mode === "system" ? "System" : mode === "light" ? "Light" : "Dark"}</Button>
         </div>
       )}
     />

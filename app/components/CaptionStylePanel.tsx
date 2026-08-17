@@ -40,8 +40,10 @@ export function CaptionStylePanel({ value, onChange }: CaptionStylePanelProps) {
           onChange={(weight) => update("fontWeight", Number(weight) as CaptionStyle["fontWeight"])}
           width="100%"
         />
-        <Slider label="Caption size" min={2.5} max={9} step={0.1} value={value.fontSizePercent} valueDisplay="text" formatValue={(size: number) => `${size.toFixed(1)}%`} onChange={(size: number) => update("fontSizePercent", size)} />
-        <Slider label="Distance from bottom" min={5} max={45} value={value.bottomPercent} valueDisplay="text" formatValue={(position: number) => `${position}%`} onChange={(position: number) => update("bottomPercent", position)} />
+        <Slider label="Caption size" min={2.5} max={12} step={0.1} value={value.fontSizePercent} valueDisplay="text" formatValue={(size: number) => `${size.toFixed(1)}%`} onChange={(size: number) => update("fontSizePercent", size)} />
+        <Slider label="Maximum line width" min={20} max={96} value={value.maxWidthPercent} valueDisplay="text" formatValue={(width: number) => `${Math.round(width)}%`} onChange={(width: number) => update("maxWidthPercent", width)} />
+        <Slider label="Horizontal position" min={0} max={100} value={value.centerXPercent} valueDisplay="text" formatValue={(position: number) => `${Math.round(position)}%`} onChange={(position: number) => update("centerXPercent", position)} />
+        <Slider label="Distance from bottom" min={0} max={100} value={value.bottomPercent} valueDisplay="text" formatValue={(position: number) => `${Math.round(position)}%`} onChange={(position: number) => update("bottomPercent", position)} />
       </section>
 
       <section className="tool-section style-section">

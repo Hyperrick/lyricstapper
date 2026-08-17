@@ -1,10 +1,10 @@
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
-import { CSSProperties, ReactNode, RefObject } from "react";
+import { CSSProperties, ReactNode, RefObject, useState } from "react";
 import { CaptionStyle } from "../../lib/captionStyle";
 import { formatClock, TimedLine } from "../../lib/captions";
-import { CaptionPreview } from "../CaptionPreview";
+import { CaptionGuideState, CaptionPreview } from "../CaptionPreview";
 import { CaptionTimeline } from "../CaptionTimeline";
 import { WorkspaceTask } from "./workspace";
 
@@ -32,8 +32,6 @@ type MediaStageProps = {
   onMediaElement: (element: MediaElement | null) => void;
   onModeChange: (mode: EditorMode) => void;
   onBeginSession: () => void;
-  onBeginHeldLine: () => void;
-  onEndHeldLine: () => void;
   onUndoMarker: () => void;
   onTimeChange: (time: number) => void;
   onMetadata: (duration: number, width?: number, height?: number) => void;
@@ -41,22 +39,31 @@ type MediaStageProps = {
   onSelectLine: (index: number) => void;
   onSeek: (time: number) => void;
   onLineChange: (index: number, line: TimedLine) => void;
+  onCaptionTextChange: (lineId: string, text: string) => void;
+  onCaptionStyleChange: (style: CaptionStyle) => void;
+  sourceActionLabel: string;
   onOpenSource: () => void;
 };
 
 export function MediaStage(props: MediaStageProps) {
+  const [captionGuides, setCaptionGuides] = useState<CaptionGuideState>({ vertical: false, horizontal: false });
   const {
     activeTask, playerRef, mediaUrl, isVideo, fittedVideoSize, currentTime, duration, mode, isPlaying,
     lines, activeIndex, activeLineText, selectedLineIndex, previewLine, previewWordIndex,
     captionStyle, previewFontSize, onMediaElement, onModeChange, onBeginSession,
-    onBeginHeldLine, onEndHeldLine, onUndoMarker, onTimeChange, onMetadata,
-    onPlayingChange, onSelectLine, onSeek, onLineChange, onOpenSource,
+    onUndoMarker, onTimeChange, onMetadata, onPlayingChange, onSelectLine, onSeek,
+    onLineChange, onCaptionTextChange, onCaptionStyleChange, sourceActionLabel, onOpenSource,
   } = props;
   const canStart = mode === "tag" && Boolean(mediaUrl) && lines.length > 0;
-  const canMark = canStart && activeIndex >= 0 && activeIndex < lines.length;
   const captionPreview: ReactNode = previewLine
-    ? <CaptionPreview line={previewLine} activeWordIndex={previewWordIndex} currentTime={currentTime} isPlaying={isPlaying} style={captionStyle} fontSize={previewFontSize} />
+    ? <CaptionPreview key={previewLine.id} line={previewLine} activeWordIndex={previewWordIndex} currentTime={currentTime} isPlaying={isPlaying} style={captionStyle} fontSize={previewFontSize} isEditable={mode === "edit"} onTextChange={(text) => onCaptionTextChange(previewLine.id, text)} onStyleChange={onCaptionStyleChange} onGuidesChange={setCaptionGuides} />
     : null;
+  const smartGuides = mode === "edit" && (captionGuides.vertical || captionGuides.horizontal) ? (
+    <div className="caption-smart-guides" aria-hidden="true">
+      {captionGuides.vertical && <span className="caption-smart-guide is-vertical" />}
+      {captionGuides.horizontal && <span className="caption-smart-guide is-horizontal" />}
+    </div>
+  ) : null;
 
   return (
     <section className="stage-panel" data-active-task={activeTask}>
@@ -71,23 +78,6 @@ export function MediaStage(props: MediaStageProps) {
             <SegmentedControlItem value="edit" label="Fine-tune" />
           </SegmentedControl>
           <Button label={isPlaying ? "Restart timing" : "Start timing"} size="lg" variant="secondary" isDisabled={!canStart} onClick={onBeginSession} />
-          <Button
-            className="hold-button"
-            label="Hold to show the current lyric"
-            size="lg"
-            variant="primary"
-            isDisabled={!canMark}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              onBeginHeldLine();
-            }}
-            onPointerUp={onEndHeldLine}
-            onPointerCancel={onEndHeldLine}
-            onLostPointerCapture={onEndHeldLine}
-          >
-            <span className="hold-button-copy">Show lyric</span>
-          </Button>
           <Button
             label="Undo last timing mark"
             size="lg"
@@ -116,7 +106,7 @@ export function MediaStage(props: MediaStageProps) {
             description="Choose an audio or video file, then add the lyrics you want to time."
             headingLevel={2}
             icon={<span className="empty-stage-icon">♪</span>}
-            actions={<Button label="Open Source" variant="primary" onClick={onOpenSource} />}
+            actions={<Button label={sourceActionLabel} variant="primary" onClick={onOpenSource} />}
           />
         )}
       </div>
@@ -141,6 +131,7 @@ export function MediaStage(props: MediaStageProps) {
           {/* Captions are rendered by the custom synchronized overlay. */}
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video ref={onMediaElement} src={mediaUrl} controls playsInline onTimeUpdate={(event) => onTimeChange(event.currentTarget.currentTime)} onLoadedMetadata={(event) => onMetadata(event.currentTarget.duration, event.currentTarget.videoWidth, event.currentTarget.videoHeight)} onPlay={() => onPlayingChange(true)} onPause={(event) => { onTimeChange(event.currentTarget.currentTime); onPlayingChange(false); }} />
+          {smartGuides}
           {captionPreview}
         </div>
       );
@@ -151,6 +142,7 @@ export function MediaStage(props: MediaStageProps) {
         <div className="record-groove" aria-hidden="true"><span>♪</span></div>
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio ref={onMediaElement} src={mediaUrl} controls onTimeUpdate={(event) => onTimeChange(event.currentTarget.currentTime)} onLoadedMetadata={(event) => onMetadata(event.currentTarget.duration)} onPlay={() => onPlayingChange(true)} onPause={(event) => { onTimeChange(event.currentTarget.currentTime); onPlayingChange(false); }} />
+        {smartGuides}
         {captionPreview}
       </div>
     );

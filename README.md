@@ -6,6 +6,19 @@ captioned MP4.
 
 > Tap your lyrics into time.
 
+## Origin
+
+I started lyricstapper while making Reels for my hobby music project,
+**Beats of Binary**. I wanted timed lyrics that followed the music closely,
+but the editing tools I tried put the workflow I needed behind a subscription.
+Paying a recurring fee for one focused task did not make sense to me.
+
+So I built the tool I wanted to use: paste finished lyrics, tap them into time,
+adjust the result and export it. What began as a utility for my own Reels is
+intended to become an open-source alternative for anyone with the same problem.
+The interface is built with [Astryx](https://github.com/facebook/astryx), an
+MIT-licensed open-source design system that grew inside Meta.
+
 ## Why
 
 Most subtitle editors are built around spoken dialogue or automatic
@@ -71,6 +84,7 @@ upload files to a server.
 ## Technology
 
 - React 19 and TypeScript
+- Astryx, Meta's open-source React design system
 - vinext/Vite for the application build
 - Mediabunny for local MP4 decoding and encoding
 - Canvas rendering for caption-safe layout and word highlighting

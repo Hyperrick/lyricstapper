@@ -3,6 +3,7 @@ export type HighlightMode = "none" | "text" | "wipe" | "background";
 export type CaptionStyle = {
   fontFamily: string;
   fontSizePercent: number;
+  maxWidthPercent: number;
   fontWeight: 500 | 700 | 900;
   textColor: string;
   pastOpacity: number;
@@ -14,6 +15,7 @@ export type CaptionStyle = {
   captionBackground: boolean;
   backgroundColor: string;
   backgroundOpacity: number;
+  centerXPercent: number;
   bottomPercent: number;
   uppercase: boolean;
 };
@@ -21,6 +23,7 @@ export type CaptionStyle = {
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   fontFamily: "Arial",
   fontSizePercent: 4.8,
+  maxWidthPercent: 84,
   fontWeight: 900,
   textColor: "#ffffff",
   pastOpacity: 72,
@@ -32,6 +35,7 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   captionBackground: false,
   backgroundColor: "#090a0d",
   backgroundOpacity: 72,
+  centerXPercent: 50,
   bottomPercent: 15,
   uppercase: false,
 };
@@ -43,7 +47,19 @@ export const CAPTION_PRESETS: Array<{ name: string; style: CaptionStyle }> = [
   { name: "Neon", style: { ...DEFAULT_CAPTION_STYLE, fontFamily: "Trebuchet MS", highlightMode: "background", highlightColor: "#62e6d2", outline: false, captionBackground: true, backgroundOpacity: 78 } },
 ];
 
-export const CAPTION_FONTS = ["Arial", "Helvetica", "Impact", "Trebuchet MS", "Verdana", "Georgia", "Courier New"];
+export const CAPTION_FONTS = [
+  { value: "Inter Variable", label: "Inter" },
+  { value: "Montserrat Variable", label: "Montserrat" },
+  { value: "League Spartan Variable", label: "League Spartan" },
+  { value: "Lexend Variable", label: "Lexend" },
+  { value: "Arial", label: "Arial" },
+  { value: "Helvetica", label: "Helvetica" },
+  { value: "Impact", label: "Impact" },
+  { value: "Trebuchet MS", label: "Trebuchet MS" },
+  { value: "Verdana", label: "Verdana" },
+  { value: "Georgia", label: "Georgia" },
+  { value: "Courier New", label: "Courier New" },
+];
 
 export function normalizeCaptionStyle(value: unknown): CaptionStyle {
   if (!value || typeof value !== "object") return DEFAULT_CAPTION_STYLE;

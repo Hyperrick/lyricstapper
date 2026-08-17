@@ -10,8 +10,8 @@ const shortcuts = [
   { keys: "space", label: "Hold while the current lyric should be visible" },
   { keys: "backspace", label: "Undo the last timing mark" },
   { keys: "p", label: "Play or pause media while timing" },
-  { keys: "left", label: "Nudge playback back by 0.1 seconds" },
-  { keys: "right", label: "Nudge playback forward by 0.1 seconds" },
+  { keys: "left", label: "Nudge playback back by 0.5 seconds" },
+  { keys: "right", label: "Nudge playback forward by 0.5 seconds" },
 ];
 
 export function ShortcutDialog({ isOpen, onOpenChange }: ShortcutDialogProps) {

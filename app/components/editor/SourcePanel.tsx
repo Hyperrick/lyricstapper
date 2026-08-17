@@ -1,7 +1,6 @@
 import { Button } from "@astryxdesign/core/Button";
 import { TextArea } from "@astryxdesign/core/TextArea";
-import { ChangeEventHandler, RefObject, useRef } from "react";
-import { supportsRememberedMedia } from "../../lib/mediaLibrary";
+import { ChangeEventHandler, RefObject } from "react";
 import { ProjectMedia } from "../../lib/projectFile";
 
 type SourcePanelProps = {
@@ -9,12 +8,11 @@ type SourcePanelProps = {
   mediaName: string;
   projectMediaReference: ProjectMedia | null;
   lyricsRows: string[];
+  preparedLyrics: string[];
   onChooseMedia: () => void;
   onLoadMedia: ChangeEventHandler<HTMLInputElement>;
   onLyricsChange: (rows: string[]) => void;
   onPrepareLyrics: () => void;
-  onLoadProject: ChangeEventHandler<HTMLInputElement>;
-  onImportCaptions: ChangeEventHandler<HTMLInputElement>;
 };
 
 export function SourcePanel({
@@ -22,16 +20,15 @@ export function SourcePanel({
   mediaName,
   projectMediaReference,
   lyricsRows,
+  preparedLyrics,
   onChooseMedia,
   onLoadMedia,
   onLyricsChange,
   onPrepareLyrics,
-  onLoadProject,
-  onImportCaptions,
 }: SourcePanelProps) {
-  const projectInputRef = useRef<HTMLInputElement | null>(null);
-  const captionInputRef = useRef<HTMLInputElement | null>(null);
-  const preparedLineCount = lyricsRows.filter((row) => row.trim() && !/^\[.+\]$/.test(row.trim())).length;
+  const sourceLines = lyricsRows.map((row) => row.trim()).filter((row) => row && !/^\[.+\]$/.test(row));
+  const preparedLineCount = sourceLines.length;
+  const isPrepared = sourceLines.length > 0 && sourceLines.length === preparedLyrics.length && sourceLines.every((line, index) => line === preparedLyrics[index]);
   const mediaLabel = projectMediaReference
     ? `Reconnect ${projectMediaReference.name}`
     : mediaName
@@ -39,8 +36,7 @@ export function SourcePanel({
       : "Choose audio or video";
 
   function openMediaPicker() {
-    if (supportsRememberedMedia()) onChooseMedia();
-    else mediaInputRef.current?.click();
+    onChooseMedia();
   }
 
   return (
@@ -69,26 +65,16 @@ export function SourcePanel({
           onChange={(value) => onLyricsChange(value.split(/\r?\n/))}
         />
         <Button
-          label={`Prepare ${preparedLineCount} ${preparedLineCount === 1 ? "line" : "lines"}`}
+          label={isPrepared
+            ? `${preparedLineCount} ${preparedLineCount === 1 ? "line" : "lines"} prepared`
+            : `Prepare ${preparedLineCount} ${preparedLineCount === 1 ? "line" : "lines"}`}
           variant="primary"
           width="100%"
-          isDisabled={!preparedLineCount}
+          isDisabled={!preparedLineCount || isPrepared}
           onClick={onPrepareLyrics}
         />
       </section>
 
-      <section className="tool-section import-section">
-        <div className="section-copy">
-          <strong>Open existing work</strong>
-          <small>Resume a Lyricstapper project or import timed captions.</small>
-        </div>
-        <input className="visually-hidden-input" ref={projectInputRef} type="file" accept=".json" onChange={onLoadProject} />
-        <input className="visually-hidden-input" ref={captionInputRef} type="file" accept=".json,.srt,.ass" onChange={onImportCaptions} />
-        <div className="button-stack">
-          <Button label="Open Lyricstapper project" variant="secondary" width="100%" onClick={() => projectInputRef.current?.click()} />
-          <Button label="Import JSON, SRT, or ASS" variant="ghost" width="100%" onClick={() => captionInputRef.current?.click()} />
-        </div>
-      </section>
     </div>
   );
 }

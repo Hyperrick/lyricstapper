@@ -1,5 +1,5 @@
 import { CaptionStyle, normalizeCaptionStyle } from "./captionStyle";
-import { TimedLine, TimedWord } from "./captions";
+import { captionSourceText, TimedLine, TimedWord } from "./captions";
 
 export type ProjectMedia = {
   name: string;
@@ -14,6 +14,7 @@ export type LyricsTapperProject = {
   format: "lyricstapper-project";
   version: 1;
   savedAt: string;
+  sourceDirectoryId?: string;
   media: ProjectMedia;
   lyrics: string[];
   captions: TimedLine[];
@@ -39,20 +40,25 @@ function parseLines(value: unknown): TimedLine[] {
   });
 }
 
-export function createProject(lines: TimedLine[], style: CaptionStyle, media: ProjectMedia): LyricsTapperProject {
+export function createProject(lines: TimedLine[], style: CaptionStyle, media: ProjectMedia, sourceDirectoryId?: string): LyricsTapperProject {
   return {
     format: "lyricstapper-project",
     version: 1,
     savedAt: new Date().toISOString(),
+    sourceDirectoryId,
     media,
-    lyrics: lines.map((line) => line.text),
+    lyrics: lines.map((line) => captionSourceText(line.text)),
     captions: lines,
     captionStyle: style,
   };
 }
 
-export function serializeProject(lines: TimedLine[], style: CaptionStyle, media: ProjectMedia): string {
-  return JSON.stringify(createProject(lines, style, media), null, 2);
+export function serializeProject(lines: TimedLine[], style: CaptionStyle, media: ProjectMedia, sourceDirectoryId?: string): string {
+  return JSON.stringify(createProject(lines, style, media, sourceDirectoryId), null, 2);
+}
+
+export function projectFingerprint(lines: TimedLine[], style: CaptionStyle, media: ProjectMedia): string {
+  return JSON.stringify({ media, lyrics: lines.map((line) => captionSourceText(line.text)), captions: lines, captionStyle: style });
 }
 
 export function parseProject(content: string): LyricsTapperProject {
@@ -66,6 +72,7 @@ export function parseProject(content: string): LyricsTapperProject {
     format: "lyricstapper-project",
     version: 1,
     savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : "",
+    sourceDirectoryId: typeof parsed.sourceDirectoryId === "string" ? parsed.sourceDirectoryId : undefined,
     media: {
       name: media.name,
       duration: Number.isFinite(media.duration) ? media.duration : 0,
