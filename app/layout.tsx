@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "@fontsource/creepster/400.css";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/league-spartan/wght.css";
 import "@fontsource-variable/lexend/wght.css";

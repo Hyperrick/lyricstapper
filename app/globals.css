@@ -224,7 +224,7 @@
   .caption-preview-content { display: flex; flex-direction: column; align-items: center; width: fit-content; max-width: 100%; padding: .22em .34em; border-radius: .22em; }
   .caption-preview.is-editable .caption-preview-content { width: 100%; box-sizing: border-box; }
   .caption-preview-render { display: contents; }
-  .caption-preview-line { display: block; width: 100%; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .caption-preview-line { display: block; width: 100%; max-width: 100%; white-space: nowrap; overflow-wrap: normal; }
   .caption-preview.is-editable { outline: 1px solid color-mix(in srgb, var(--color-accent) 72%, white); outline-offset: .18em; pointer-events: auto; }
   .caption-preview.is-editable:focus-within { outline-width: 2px; }
   .caption-preview-editor {

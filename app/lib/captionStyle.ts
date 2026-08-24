@@ -4,7 +4,7 @@ export type CaptionStyle = {
   fontFamily: string;
   fontSizePercent: number;
   maxWidthPercent: number;
-  fontWeight: 500 | 700 | 900;
+  fontWeight: 400 | 500 | 700 | 900;
   textColor: string;
   pastOpacity: number;
   highlightMode: HighlightMode;
@@ -45,9 +45,11 @@ export const CAPTION_PRESETS: Array<{ name: string; style: CaptionStyle }> = [
   { name: "Punch", style: { ...DEFAULT_CAPTION_STYLE, fontFamily: "Impact", fontSizePercent: 5.4, highlightMode: "background", highlightColor: "#ffca61", shadow: true, uppercase: true } },
   { name: "Clean", style: { ...DEFAULT_CAPTION_STYLE, fontFamily: "Helvetica", fontWeight: 700, highlightColor: "#ff5e78", outline: false, shadow: true, captionBackground: true, backgroundOpacity: 58 } },
   { name: "Neon", style: { ...DEFAULT_CAPTION_STYLE, fontFamily: "Trebuchet MS", highlightMode: "background", highlightColor: "#62e6d2", outline: false, captionBackground: true, backgroundOpacity: 78 } },
+  { name: "Halloween", style: { ...DEFAULT_CAPTION_STYLE, fontFamily: "Creepster", fontSizePercent: 5.8, maxWidthPercent: 88, fontWeight: 400, textColor: "#f6e7c1", pastOpacity: 64, highlightMode: "background", highlightColor: "#ff7a00", highlightTextColor: "#2b0a3d", captionBackground: true, backgroundColor: "#241033", backgroundOpacity: 76 } },
 ];
 
 export const CAPTION_FONTS = [
+  { value: "Creepster", label: "Creepster" },
   { value: "Inter Variable", label: "Inter" },
   { value: "Montserrat Variable", label: "Montserrat" },
   { value: "League Spartan Variable", label: "League Spartan" },

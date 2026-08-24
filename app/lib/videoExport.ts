@@ -1,29 +1,11 @@
 import { distributeWords, forcedLineBreakWordIndexes, TimedLine, TimedWord, wordProgress } from "./captions";
+import { wrapCaptionWords } from "./captionLayout";
 import { CaptionStyle, colorWithOpacity } from "./captionStyle";
 
 type RenderWord = TimedWord & { width: number };
 
 function activeCaption(lines: TimedLine[], time: number): TimedLine | undefined {
   return lines.find((line) => line.start !== null && line.end !== null && time >= line.start && time < line.end);
-}
-
-function wrapWords(ctx: OffscreenCanvasRenderingContext2D, words: TimedWord[], maxWidth: number, forcedBreaks: Set<number>): RenderWord[][] {
-  const spaceWidth = ctx.measureText(" ").width;
-  const rows: RenderWord[][] = [];
-  let row: RenderWord[] = [];
-  let rowWidth = 0;
-  words.forEach((word, index) => {
-    const width = ctx.measureText(word.word).width;
-    if (row.length && (forcedBreaks.has(index) || rowWidth + spaceWidth + width > maxWidth)) {
-      rows.push(row);
-      row = [];
-      rowWidth = 0;
-    }
-    row.push({ ...word, width });
-    rowWidth += (row.length > 1 ? spaceWidth : 0) + width;
-  });
-  if (row.length) rows.push(row);
-  return rows;
 }
 
 function roundedRect(ctx: OffscreenCanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
@@ -48,7 +30,12 @@ function drawCaption(ctx: OffscreenCanvasRenderingContext2D, lines: TimedLine[],
   ctx.lineWidth = style.outline ? Math.max(2, height * 0.0045) : 0;
   ctx.strokeStyle = "#090a0d";
 
-  const rows = wrapWords(ctx, words, width * style.maxWidthPercent / 100, forcedLineBreakWordIndexes(caption.text));
+  const rows: RenderWord[][] = wrapCaptionWords(
+    words.map((word) => word.word),
+    (text) => ctx.measureText(text).width,
+    width * style.maxWidthPercent / 100,
+    forcedLineBreakWordIndexes(caption.text),
+  ).map((row) => row.map((layoutWord) => ({ ...words[layoutWord.index], width: layoutWord.width })));
   const spaceWidth = ctx.measureText(" ").width;
   const centerX = width * style.centerXPercent / 100;
   const fontMetrics = ctx.measureText("Mg");
@@ -119,6 +106,7 @@ function drawCaption(ctx: OffscreenCanvasRenderingContext2D, lines: TimedLine[],
 }
 
 export async function renderCaptionedMp4(file: File, lines: TimedLine[], style: CaptionStyle, onProgress: (progress: number) => void): Promise<Blob> {
+  await document.fonts.load(`${style.fontWeight} 1em "${style.fontFamily}"`);
   const { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, Quality } = await import("mediabunny");
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
   const target = new BufferTarget();

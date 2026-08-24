@@ -35,7 +35,7 @@ export function CaptionStylePanel({ value, onChange }: CaptionStylePanelProps) {
         <Selector label="Font" options={[...CAPTION_FONTS]} value={value.fontFamily} onChange={(font) => update("fontFamily", font)} width="100%" />
         <Selector
           label="Weight"
-          options={[{ value: "500", label: "Medium" }, { value: "700", label: "Bold" }, { value: "900", label: "Black" }]}
+          options={[{ value: "400", label: "Regular" }, { value: "500", label: "Medium" }, { value: "700", label: "Bold" }, { value: "900", label: "Black" }]}
           value={String(value.fontWeight)}
           onChange={(weight) => update("fontWeight", Number(weight) as CaptionStyle["fontWeight"])}
           width="100%"

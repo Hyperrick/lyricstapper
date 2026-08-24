@@ -587,6 +587,7 @@ export function LyricTimestamper() {
           previewWordIndex={previewWordIndex}
           captionStyle={captionStyle}
           previewFontSize={previewFontSize}
+          captionLayoutSize={videoSize}
           onMediaElement={(element) => { mediaRef.current = element; }}
           onModeChange={switchMode}
           onBeginSession={beginSession}

@@ -29,6 +29,7 @@ type MediaStageProps = {
   previewWordIndex: number;
   captionStyle: CaptionStyle;
   previewFontSize: number;
+  captionLayoutSize: { width: number; height: number };
   onMediaElement: (element: MediaElement | null) => void;
   onModeChange: (mode: EditorMode) => void;
   onBeginSession: () => void;
@@ -50,13 +51,13 @@ export function MediaStage(props: MediaStageProps) {
   const {
     activeTask, playerRef, mediaUrl, isVideo, fittedVideoSize, currentTime, duration, mode, isPlaying,
     lines, activeIndex, activeLineText, selectedLineIndex, previewLine, previewWordIndex,
-    captionStyle, previewFontSize, onMediaElement, onModeChange, onBeginSession,
+    captionStyle, previewFontSize, captionLayoutSize, onMediaElement, onModeChange, onBeginSession,
     onUndoMarker, onTimeChange, onMetadata, onPlayingChange, onSelectLine, onSeek,
     onLineChange, onCaptionTextChange, onCaptionStyleChange, sourceActionLabel, onOpenSource,
   } = props;
   const canStart = mode === "tag" && Boolean(mediaUrl) && lines.length > 0;
   const captionPreview: ReactNode = previewLine
-    ? <CaptionPreview key={previewLine.id} line={previewLine} activeWordIndex={previewWordIndex} currentTime={currentTime} isPlaying={isPlaying} style={captionStyle} fontSize={previewFontSize} isEditable={mode === "edit"} onTextChange={(text) => onCaptionTextChange(previewLine.id, text)} onStyleChange={onCaptionStyleChange} onGuidesChange={setCaptionGuides} />
+    ? <CaptionPreview key={previewLine.id} line={previewLine} activeWordIndex={previewWordIndex} currentTime={currentTime} isPlaying={isPlaying} style={captionStyle} fontSize={previewFontSize} layoutSize={captionLayoutSize} isEditable={mode === "edit"} onTextChange={(text) => onCaptionTextChange(previewLine.id, text)} onStyleChange={onCaptionStyleChange} onGuidesChange={setCaptionGuides} />
     : null;
   const smartGuides = mode === "edit" && (captionGuides.vertical || captionGuides.horizontal) ? (
     <div className="caption-smart-guides" aria-hidden="true">

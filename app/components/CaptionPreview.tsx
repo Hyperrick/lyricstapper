@@ -1,8 +1,9 @@
 "use client";
 
-import { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { wrapCaptionWords } from "../lib/captionLayout";
 import { CaptionStyle, colorWithOpacity } from "../lib/captionStyle";
-import { distributeWords, replaceTimedLineText, TimedLine, wordProgress } from "../lib/captions";
+import { distributeWords, forcedLineBreakWordIndexes, replaceTimedLineText, TimedLine, wordProgress } from "../lib/captions";
 
 type CaptionPreviewProps = {
   line: TimedLine;
@@ -11,6 +12,7 @@ type CaptionPreviewProps = {
   isPlaying: boolean;
   style: CaptionStyle;
   fontSize: number;
+  layoutSize: { width: number; height: number };
   isEditable?: boolean;
   onTextChange?: (text: string) => void;
   onStyleChange?: (style: CaptionStyle) => void;
@@ -56,17 +58,53 @@ function previewTextShadow(style: CaptionStyle): string {
   return shadows.length ? shadows.join(", ") : "none";
 }
 
-export function CaptionPreview({ line, activeWordIndex, currentTime, isPlaying, style, fontSize, isEditable = false, onTextChange, onStyleChange, onGuidesChange }: CaptionPreviewProps) {
+export function CaptionPreview({ line, activeWordIndex, currentTime, isPlaying, style, fontSize, layoutSize, isEditable = false, onTextChange, onStyleChange, onGuidesChange }: CaptionPreviewProps) {
   const [animatedTime, setAnimatedTime] = useState(currentTime);
   const [draftState, setDraftState] = useState({ baseText: line.text, text: line.text });
+  const [measuredRows, setMeasuredRows] = useState<{ key: string; rows: number[][] } | null>(null);
   const transformSessionRef = useRef<TransformSession | null>(null);
   const hasLocalDraft = draftState.text !== draftState.baseText;
   const draft = !hasLocalDraft && draftState.baseText !== line.text ? line.text : draftState.text;
-  const renderedLine = isEditable && draft !== line.text ? replaceTimedLineText(line, draft) : line;
-  const timedWords = distributeWords(renderedLine);
-  const textRows = renderedLine.text.split(/\r?\n/).map((row) => row.split(/\s+/).filter(Boolean));
-  let absoluteWordIndex = 0;
+  const renderedLine = useMemo(
+    () => isEditable && draft !== line.text ? replaceTimedLineText(line, draft) : line,
+    [draft, isEditable, line],
+  );
+  const timedWords = useMemo(() => distributeWords(renderedLine), [renderedLine]);
+  const forcedBreaks = useMemo(() => forcedLineBreakWordIndexes(renderedLine.text), [renderedLine.text]);
+  const measuredWords = useMemo(
+    () => timedWords.map((word) => style.uppercase ? word.word.toUpperCase() : word.word),
+    [style.uppercase, timedWords],
+  );
+  const layoutKey = `${renderedLine.text}\u0000${style.fontFamily}\u0000${style.fontWeight}\u0000${style.fontSizePercent}\u0000${style.maxWidthPercent}\u0000${style.uppercase}\u0000${layoutSize.width}x${layoutSize.height}`;
+  const fallbackRows = useMemo(
+    () => wrapCaptionWords(measuredWords, () => 0, Number.POSITIVE_INFINITY, forcedBreaks).map((row) => row.map((word) => word.index)),
+    [forcedBreaks, measuredWords],
+  );
+  const textRows = measuredRows?.key === layoutKey ? measuredRows.rows : fallbackRows;
   const previewTime = isPlaying && style.highlightMode === "wipe" ? animatedTime : currentTime;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function measureRows() {
+      await document.fonts.load(`${style.fontWeight} 1em "${style.fontFamily}"`);
+      if (cancelled) return;
+      const context = document.createElement("canvas").getContext("2d");
+      if (!context) return;
+      const layoutFontSize = Math.max(18, Math.round(layoutSize.height * style.fontSizePercent / 100));
+      context.font = `${style.fontWeight} ${layoutFontSize}px "${style.fontFamily}", sans-serif`;
+      const rows = wrapCaptionWords(
+        measuredWords,
+        (text) => context.measureText(text).width,
+        layoutSize.width * style.maxWidthPercent / 100,
+        forcedBreaks,
+      ).map((row) => row.map((word) => word.index));
+      if (!cancelled) setMeasuredRows({ key: layoutKey, rows });
+    }
+
+    void measureRows();
+    return () => { cancelled = true; };
+  }, [forcedBreaks, layoutKey, layoutSize.height, layoutSize.width, measuredWords, style.fontFamily, style.fontSizePercent, style.fontWeight, style.maxWidthPercent]);
 
   useEffect(() => {
     if (!isPlaying || style.highlightMode !== "wipe") return;
@@ -203,10 +241,10 @@ export function CaptionPreview({ line, activeWordIndex, currentTime, isPlaying, 
     <div className={`caption-preview ${isEditable ? "is-editable" : ""}`} aria-live="polite" style={containerStyle}>
       <span className="caption-preview-content" style={contentStyle}>
         <span className="caption-preview-render" aria-hidden={isEditable || undefined}>
-          {textRows.map((wordsInRow, rowIndex) => (
+          {textRows.map((wordIndexes, rowIndex) => (
             <span className="caption-preview-line" key={`row-${rowIndex}`}>
-            {wordsInRow.map((word, wordIndex) => {
-              const index = absoluteWordIndex++;
+            {wordIndexes.map((index, wordIndex) => {
+              const word = timedWords[index]?.word ?? "";
               const isActive = index === activeWordIndex;
               const isPast = index < activeWordIndex;
               const activeBackground = isActive && style.highlightMode === "background";
