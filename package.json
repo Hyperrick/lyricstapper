@@ -50,7 +50,7 @@
     "react-server-dom-webpack": "19.2.8"
   },
   "devDependencies": {
-    "@astryxdesign/cli": "0.4.3",
+    "@astryxdesign/cli": "0.5.0",
     "@cloudflare/vite-plugin": "1.52.1",
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.3.1",
