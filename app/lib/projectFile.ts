@@ -1,5 +1,8 @@
-import { CaptionStyle, normalizeCaptionStyle } from "./captionStyle";
-import { captionSourceText, TimedLine, TimedWord } from "./captions";
+import { parseCaptionStyle } from "./captionStyle";
+import type { CaptionStyle } from "./captionStyle";
+import { captionSourceText } from "./captions";
+import type { TimedLine } from "./captions";
+import { IMPORT_LIMITS, isRecord, parseJsonRecord, validateBoundedNumber, validateCaptionLines, validateLyrics, validateMediaFilename, validateShortString } from "./importValidation";
 
 export type ProjectMedia = {
   name: string;
@@ -21,35 +24,64 @@ export type LyricsTapperProject = {
   captionStyle: CaptionStyle;
 };
 
-function validWord(value: unknown): value is TimedWord {
-  if (!value || typeof value !== "object") return false;
-  const word = value as Partial<TimedWord>;
-  return typeof word.word === "string" && Number.isFinite(word.start) && Number.isFinite(word.end);
+function sourceDirectoryIdFrom(value: unknown): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  const sourceDirectoryId = validateShortString(value, "Project directory ID", IMPORT_LIMITS.maxIdentifierLength);
+  if (!/^[a-z0-9_-]+$/i.test(sourceDirectoryId)) throw new Error("Project directory ID is invalid.");
+  return sourceDirectoryId;
 }
 
-function parseLines(value: unknown): TimedLine[] {
-  if (!Array.isArray(value)) throw new Error("The project contains no caption lines.");
-  return value.map((item, index) => {
-    if (!item || typeof item !== "object") throw new Error(`Caption line ${index + 1} is invalid.`);
-    const line = item as Partial<TimedLine>;
-    if (typeof line.text !== "string") throw new Error(`Caption line ${index + 1} has no text.`);
-    const start = line.start === null || Number.isFinite(line.start) ? line.start ?? null : null;
-    const end = line.end === null || Number.isFinite(line.end) ? line.end ?? null : null;
-    const words = Array.isArray(line.words) && line.words.every(validWord) ? line.words : undefined;
-    return { id: typeof line.id === "string" ? line.id : `project-${Date.now()}-${index}`, text: line.text, start, end, words };
+function projectMediaFrom(value: unknown, allowMissingName: boolean): ProjectMedia {
+  if (!isRecord(value)) throw new Error("The project contains no media reference.");
+  return {
+    name: allowMissingName && value.name === ""
+      ? ""
+      : validateMediaFilename(value.name, "Project media name"),
+    duration: validateBoundedNumber(value.duration, "Project media duration", {
+      minimum: 0,
+      maximum: IMPORT_LIMITS.maxTimelineSeconds,
+    }),
+    width: value.width === undefined
+      ? 720
+      : validateBoundedNumber(value.width, "Project media width", { minimum: 1, maximum: IMPORT_LIMITS.maxVideoDimension, integer: true }),
+    height: value.height === undefined
+      ? 1280
+      : validateBoundedNumber(value.height, "Project media height", { minimum: 1, maximum: IMPORT_LIMITS.maxVideoDimension, integer: true }),
+    size: value.size === undefined
+      ? undefined
+      : validateBoundedNumber(value.size, "Project media size", { minimum: 0, maximum: Number.MAX_SAFE_INTEGER, integer: true }),
+    lastModified: value.lastModified === undefined
+      ? undefined
+      : validateBoundedNumber(value.lastModified, "Project media modified time", { minimum: 0, maximum: Number.MAX_SAFE_INTEGER, integer: true }),
+  };
+}
+
+function normalizeLegacyProjectCaptions(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => {
+    if (!isRecord(entry)) return entry;
+    const hasNoStart = entry.start === null || entry.start === undefined;
+    const hasFiniteEnd = typeof entry.end === "number" && Number.isFinite(entry.end);
+    return hasNoStart && hasFiniteEnd ? { ...entry, end: null } : entry;
   });
 }
 
 export function createProject(lines: TimedLine[], style: CaptionStyle, media: ProjectMedia, sourceDirectoryId?: string): LyricsTapperProject {
+  const validatedMedia = projectMediaFrom(media, false);
+  const validatedCaptions = validateCaptionLines(lines, {
+    allowIncomplete: true,
+    idPrefix: "project",
+    maximumEndTime: validatedMedia.duration > 0 ? validatedMedia.duration : undefined,
+  });
   return {
     format: "lyricstapper-project",
     version: 1,
     savedAt: new Date().toISOString(),
-    sourceDirectoryId,
-    media,
-    lyrics: lines.map((line) => captionSourceText(line.text)),
-    captions: lines,
-    captionStyle: style,
+    sourceDirectoryId: sourceDirectoryIdFrom(sourceDirectoryId),
+    media: validatedMedia,
+    lyrics: validatedCaptions.map((line) => captionSourceText(line.text)),
+    captions: validatedCaptions,
+    captionStyle: parseCaptionStyle(style),
   };
 }
 
@@ -62,27 +94,28 @@ export function projectFingerprint(lines: TimedLine[], style: CaptionStyle, medi
 }
 
 export function parseProject(content: string): LyricsTapperProject {
-  const parsed = JSON.parse(content) as Partial<LyricsTapperProject> & { format?: string };
+  const parsed = parseJsonRecord(content, "The project file");
   const supportedFormat = parsed.format === "lyricstapper-project" || parsed.format === "beatmark-project";
   if (!supportedFormat || parsed.version !== 1) throw new Error("This is not a supported lyricstapper project file.");
-  const media = parsed.media;
-  if (!media || typeof media.name !== "string") throw new Error("The project contains no media reference.");
-  const captions = parseLines(parsed.captions);
+  const media = projectMediaFrom(parsed.media, true);
+  const captions = validateCaptionLines(normalizeLegacyProjectCaptions(parsed.captions), {
+    allowIncomplete: true,
+    idPrefix: `project-${Date.now()}`,
+    maximumEndTime: media.duration > 0 ? media.duration : undefined,
+  });
+  const savedAt = parsed.savedAt === undefined || parsed.savedAt === ""
+    ? ""
+    : validateShortString(parsed.savedAt, "Project savedAt", 64);
+  if (savedAt && !Number.isFinite(Date.parse(savedAt))) throw new Error("Project savedAt must be a valid date.");
+  const sourceDirectoryId = sourceDirectoryIdFrom(parsed.sourceDirectoryId);
   return {
     format: "lyricstapper-project",
     version: 1,
-    savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : "",
-    sourceDirectoryId: typeof parsed.sourceDirectoryId === "string" ? parsed.sourceDirectoryId : undefined,
-    media: {
-      name: media.name,
-      duration: Number.isFinite(media.duration) ? media.duration : 0,
-      width: Number.isFinite(media.width) ? media.width : 720,
-      height: Number.isFinite(media.height) ? media.height : 1280,
-      size: Number.isFinite(media.size) ? media.size : undefined,
-      lastModified: Number.isFinite(media.lastModified) ? media.lastModified : undefined,
-    },
-    lyrics: Array.isArray(parsed.lyrics) ? parsed.lyrics.filter((item): item is string => typeof item === "string") : captions.map((line) => line.text),
+    savedAt,
+    sourceDirectoryId,
+    media,
+    lyrics: parsed.lyrics === undefined ? captions.map((line) => line.text) : validateLyrics(parsed.lyrics),
     captions,
-    captionStyle: normalizeCaptionStyle(parsed.captionStyle),
+    captionStyle: parseCaptionStyle(parsed.captionStyle),
   };
 }

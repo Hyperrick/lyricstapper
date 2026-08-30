@@ -22,6 +22,10 @@
 
 # misc
 .DS_Store
+.npmrc
+*.key
+*.p12
+*.pfx
 *.pem
 
 # debug

@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible problem in lyricstapper.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve lyricstapper. Do not attach private songs, lyrics, project files, or local file paths. Use synthetic test material instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a synthetic audio or video file
+        2. Prepare captions
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 140
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      placeholder: macOS 16.0
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running lyricstapper?
+      options:
+        - Local development server
+        - Docker Compose
+        - Other self-hosted deployment
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Relevant console output
+      description: Remove personal data and local paths before pasting logs.
+      render: shell

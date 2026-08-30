@@ -1,7 +1,7 @@
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { NumberInput } from "@astryxdesign/core/NumberInput";
 import { useEffect, useRef } from "react";
-import { formatClock, TimedLine } from "../../lib/captions";
+import { formatClock, isTimedLine, TimedLine } from "../../lib/captions";
 import { CaptionTextEditor } from "./CaptionTextEditor";
 
 type CaptionPanelProps = {
@@ -47,12 +47,12 @@ export function CaptionPanel({ lines, activeIndex, markingLineIndex, duration, o
         onSave={(text) => onUpdateText(selectedIndex, text)}
       />
       <div className="caption-list-summary">
-        <span>{lines.filter((line) => line.end !== null).length} of {lines.length} timed</span>
+        <span>{lines.filter(isTimedLine).length} of {lines.length} timed</span>
         <span>{formatClock(duration)}</span>
       </div>
       <div className="caption-line-list" ref={listRef} role="list" aria-label="Caption lines">
         {lines.map((line, index) => {
-          const isDone = line.start !== null && line.end !== null;
+          const isDone = isTimedLine(line);
           return (
             <div className={`caption-line-row ${index === activeIndex ? "is-active" : ""} ${index === markingLineIndex ? "is-marking" : ""}`} data-caption-index={index} key={line.id} role="listitem">
               <button className="caption-line-select" type="button" onClick={() => onSelectLine(index)}>
@@ -67,11 +67,13 @@ export function CaptionPanel({ lines, activeIndex, markingLineIndex, duration, o
                 isLabelHidden
                 size="sm"
                 step={0.01}
-                min={line.start === null ? 0 : line.start + 0.05}
+                min={line.start === null ? undefined : line.start + 0.05}
                 max={duration || undefined}
                 value={line.end}
                 placeholder="End"
                 hasClear
+                isDisabled={line.start === null}
+                disabledMessage="Set the line start before editing its end time."
                 width={96}
                 onChange={(value) => onUpdateEnd(index, value)}
               />

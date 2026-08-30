@@ -2,5 +2,5 @@ services:
   lyricstapper:
     build: .
     ports:
-      - "3000:3000"
+      - "${LYRICSTAPPER_BIND_ADDRESS:-127.0.0.1}:${LYRICSTAPPER_PORT:-3000}:3000"
     restart: unless-stopped

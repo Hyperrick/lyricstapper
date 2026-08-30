@@ -17,6 +17,11 @@ test("server-renders the lyricstapper workspace", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.match(response.headers.get("content-security-policy") ?? "", /default-src 'self'/i);
+  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/i);
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
 
   const html = await response.text();
   assert.match(html, /<title>lyricstapper<\/title>/i);

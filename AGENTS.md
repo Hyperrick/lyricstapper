@@ -24,7 +24,7 @@ Run `npm run typecheck`, `npm run lint`, and `npm test` before opening a pull re
 
 ## Coding Style & Naming Conventions
 
-Write TypeScript and React with two-space indentation, semicolons, and double-quoted strings. Use PascalCase for components and filenames (`LyricsTable.tsx`) and camelCase for functions and variables (`exportCaptions`). Organize by responsibility: orchestration, UI, media access, caption calculations, and serialization belong in separate modules. Refactor files as they approach 600 lines; `npm test` enforces a hard maximum of 800 physical lines for source and configuration files. ESLint is the source of truth for quality and accessibility rules.
+Write TypeScript and React with two-space indentation, semicolons, and double-quoted strings. Use PascalCase for components and filenames (`LyricsTable.tsx`) and camelCase for functions and variables (`exportCaptions`). Organize by responsibility: orchestration, UI, media access, caption calculations, and serialization belong in separate modules. Refactor files before they reach 600 lines; `npm test` enforces a hard maximum of 600 physical lines for source and configuration files. ESLint is the source of truth for quality and accessibility rules.
 
 ## Testing Guidelines
 

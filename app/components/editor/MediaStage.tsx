@@ -3,7 +3,7 @@ import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { CSSProperties, ReactNode, RefObject, useState } from "react";
 import { CaptionStyle } from "../../lib/captionStyle";
-import { formatClock, TimedLine } from "../../lib/captions";
+import { formatClock, isTimedLine, TimedLine } from "../../lib/captions";
 import { CaptionGuideState, CaptionPreview } from "../CaptionPreview";
 import { CaptionTimeline } from "../CaptionTimeline";
 import { WorkspaceTask } from "./workspace";
@@ -22,7 +22,6 @@ type MediaStageProps = {
   mode: EditorMode;
   isPlaying: boolean;
   lines: TimedLine[];
-  activeIndex: number;
   activeLineText: string;
   selectedLineIndex: number | null;
   previewLine: TimedLine | null;
@@ -50,12 +49,13 @@ export function MediaStage(props: MediaStageProps) {
   const [captionGuides, setCaptionGuides] = useState<CaptionGuideState>({ vertical: false, horizontal: false });
   const {
     activeTask, playerRef, mediaUrl, isVideo, fittedVideoSize, currentTime, duration, mode, isPlaying,
-    lines, activeIndex, activeLineText, selectedLineIndex, previewLine, previewWordIndex,
+    lines, activeLineText, selectedLineIndex, previewLine, previewWordIndex,
     captionStyle, previewFontSize, captionLayoutSize, onMediaElement, onModeChange, onBeginSession,
     onUndoMarker, onTimeChange, onMetadata, onPlayingChange, onSelectLine, onSeek,
     onLineChange, onCaptionTextChange, onCaptionStyleChange, sourceActionLabel, onOpenSource,
   } = props;
   const canStart = mode === "tag" && Boolean(mediaUrl) && lines.length > 0;
+  const allLinesTimed = lines.length > 0 && lines.every(isTimedLine);
   const captionPreview: ReactNode = previewLine
     ? <CaptionPreview key={previewLine.id} line={previewLine} activeWordIndex={previewWordIndex} currentTime={currentTime} isPlaying={isPlaying} style={captionStyle} fontSize={previewFontSize} layoutSize={captionLayoutSize} isEditable={mode === "edit"} onTextChange={(text) => onCaptionTextChange(previewLine.id, text)} onStyleChange={onCaptionStyleChange} onGuidesChange={setCaptionGuides} />
     : null;
@@ -95,7 +95,7 @@ export function MediaStage(props: MediaStageProps) {
           />
         </div>
         <div className="now-marking">
-          <span>{activeIndex >= lines.length && lines.length ? "COMPLETE" : "NOW MARKING"}</span>
+          <span>{allLinesTimed ? "COMPLETE" : "NOW MARKING"}</span>
           <strong>{activeLineText}</strong>
         </div>
       </div>

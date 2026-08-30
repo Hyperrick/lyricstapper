@@ -1,25 +1,18 @@
 "use client";
 
-import { AppShell } from "@astryxdesign/core/AppShell";
-import { Button } from "@astryxdesign/core/Button";
 import { useToast } from "@astryxdesign/core/Toast";
-import { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { captionSourceText, distributeWords, downloadText, importCaptionFile, parseLyrics, replaceTimedLineText, TimedLine, toAss, toJson, toSrt } from "../lib/captions";
+import { ChangeEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { boundedCaptionEnd, captionSourceText, distributeWords, downloadText, importCaptionFile, isTimedLine, parseLyrics, replaceTimedLineText, TimedLine, toAss, toJson, toSrt } from "../lib/captions";
 import { DEFAULT_CAPTION_STYLE, normalizeCaptionStyle, CaptionStyle } from "../lib/captionStyle";
 import { parseProject, projectFingerprint, ProjectMedia, serializeProject } from "../lib/projectFile";
 import { chooseProjectFile, findProjectMedia, LocalProjectFileHandle, overwriteProjectFile, saveProjectInDirectory } from "../lib/projectDirectory";
 import { chooseRememberedMedia, recallMedia, rememberMedia, supportsRememberedMedia } from "../lib/mediaLibrary";
+import { assertImportFile } from "../lib/importValidation";
 import { downloadBlob, renderCaptionedMp4 } from "../lib/videoExport";
-import { CaptionStylePanel } from "./CaptionStylePanel";
-import { CaptionPanel } from "./editor/CaptionPanel";
-import { EditorHeader } from "./editor/EditorHeader";
-import { ExportPanel } from "./editor/ExportPanel";
-import { EditorMode, MediaElement, MediaStage } from "./editor/MediaStage";
-import { ShortcutDialog } from "./editor/ShortcutDialog";
-import { SourcePanel } from "./editor/SourcePanel";
-import { UnsavedChangesDialog } from "./editor/UnsavedChangesDialog";
-import { WorkspaceTabs } from "./editor/WorkspaceTabs";
-import { WorkspaceTask, WORKSPACE_TASK_DETAILS } from "./editor/workspace";
+import { EditorWorkspace } from "./editor/EditorWorkspace";
+import { useTimingKeyboardShortcuts } from "./editor/useTimingKeyboardShortcuts";
+import type { EditorMode, MediaElement } from "./editor/MediaStage";
+import type { WorkspaceTask } from "./editor/workspace";
 
 type TimingSnapshot = { lines: TimedLine[]; activeIndex: number; time: number };
 
@@ -86,22 +79,18 @@ export function LyricTimestamper() {
   }, [lines, lyricsRows]);
   const hasUnsavedChanges = hasUnpreparedLyrics
     || (lines.length > 0 && currentProjectFingerprint !== savedProjectFingerprint);
-
-  const completedCount = lines.filter((line) => line.end !== null).length;
+  const completedCount = lines.filter(isTimedLine).length;
   const activeLine = activeIndex >= 0 ? lines[activeIndex] : null;
-
   const previewLine = useMemo(() => {
-    const timed = lines.find((line) => line.start !== null && line.end !== null && currentTime >= line.start && currentTime < line.end);
+    const timed = lines.find((line) => isTimedLine(line) && currentTime >= line.start && currentTime < line.end);
     const open = lines.find((line) => line.start !== null && line.end === null);
     return timed ?? open ?? null;
   }, [currentTime, lines]);
-
   const activeWordIndex = useMemo(() => {
     if (previewLine?.start === null || previewLine?.start === undefined || previewLine.end === null) return -1;
     return distributeWords(previewLine).findIndex((word) => currentTime >= word.start && currentTime < word.end);
   }, [currentTime, previewLine]);
   const previewWordIndex = activeWordIndex;
-
   const fittedVideoSize = useMemo(() => {
     if (!playerSize.width || !playerSize.height || !videoSize.width || !videoSize.height) return null;
     const videoRatio = videoSize.width / videoSize.height;
@@ -135,6 +124,10 @@ export function LyricTimestamper() {
     const media = mediaRef.current;
     if (!media || holdingLineRef.current !== null || activeIndex < 0 || activeIndex >= lines.length) return;
     const time = Math.max(0, media.currentTime);
+    if (boundedCaptionEnd(time, time, media.duration) === null) {
+      showNotice("Move the playhead before the end of the media to time this line.");
+      return;
+    }
     historyRef.current.push({ lines, activeIndex, time });
     holdingLineRef.current = activeIndex;
     setActiveTask("captions");
@@ -144,18 +137,23 @@ export function LyricTimestamper() {
       if (index === activeIndex) return { ...line, start: time, end: null, words: undefined };
       return line;
     }));
-  }, [activeIndex, lines]);
+  }, [activeIndex, lines, showNotice]);
 
   const endHeldLine = useCallback(() => {
     const media = mediaRef.current;
     const lineIndex = holdingLineRef.current;
     if (!media || lineIndex === null) return;
     const time = Math.max(0, media.currentTime);
+    const mediaDuration = media.duration;
     holdingLineRef.current = null;
     setMarkingLineIndex(null);
-    setLines((previous) => previous.map((line, index) => index === lineIndex && line.start !== null
-      ? { ...line, end: Math.max(time, line.start + 0.05), words: undefined }
-      : line));
+    setLines((previous) => previous.map((line, index) => {
+      if (index !== lineIndex || line.start === null) return line;
+      const end = boundedCaptionEnd(line.start, time, mediaDuration);
+      return end === null
+        ? { ...line, start: null, end: null, words: undefined }
+        : { ...line, end, words: undefined };
+    }));
     setActiveIndex(lineIndex + 1);
   }, []);
 
@@ -173,7 +171,7 @@ export function LyricTimestamper() {
     if (nextMode === "edit") {
       if (holdingLineRef.current !== null) endHeldLine();
       mediaRef.current?.pause();
-      const firstCompleted = lines.findIndex((line) => line.start !== null && line.end !== null);
+      const firstCompleted = lines.findIndex(isTimedLine);
       setActiveTask("captions");
       setIsInspectorOpen(true);
       if (firstCompleted !== -1) setActiveIndex(firstCompleted);
@@ -187,57 +185,13 @@ export function LyricTimestamper() {
   const beginSession = useCallback(() => {
     const media = mediaRef.current;
     if (!media || !lines.length) return;
-    const firstUntimed = lines.findIndex((line) => line.start === null);
+    const firstUntimed = lines.findIndex((line) => !isTimedLine(line));
     setActiveIndex(firstUntimed === -1 ? 0 : firstUntimed);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     playMedia(media);
   }, [lines, playMedia]);
 
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches("textarea, input, select")) return;
-      if (mode !== "tag") {
-        if (event.code === "Space") {
-          event.preventDefault();
-          if (!event.repeat && mediaRef.current) {
-            if (mediaRef.current.paused) playMedia(mediaRef.current);
-            else mediaRef.current.pause();
-          }
-        } else if (["Backspace", "KeyP", "ArrowLeft", "ArrowRight"].includes(event.code)) {
-          event.preventDefault();
-        }
-        return;
-      }
-      if (event.code === "Space") {
-        event.preventDefault();
-        if (!event.repeat) beginHeldLine();
-      } else if (event.code === "Backspace") {
-        event.preventDefault();
-        undoMarker();
-      } else if (event.code === "KeyP" && mediaRef.current) {
-        event.preventDefault();
-        if (mediaRef.current.paused) playMedia(mediaRef.current);
-        else mediaRef.current.pause();
-      } else if ((event.code === "ArrowLeft" || event.code === "ArrowRight") && mediaRef.current) {
-        event.preventDefault();
-        mediaRef.current.currentTime += event.code === "ArrowLeft" ? -0.5 : 0.5;
-      }
-    };
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (mode !== "tag") return;
-      if (event.code !== "Space") return;
-      event.preventDefault();
-      endHeldLine();
-    };
-    window.addEventListener("keydown", handleKey);
-    window.addEventListener("keyup", handleKeyUp);
-    window.addEventListener("blur", endHeldLine);
-    return () => {
-      window.removeEventListener("keydown", handleKey);
-      window.removeEventListener("keyup", handleKeyUp);
-      window.removeEventListener("blur", endHeldLine);
-    };
-  }, [beginHeldLine, endHeldLine, mode, playMedia, undoMarker]);
+  useTimingKeyboardShortcuts({ beginHeldLine, endHeldLine, mediaRef, mode, playMedia, undoMarker });
 
   useEffect(() => () => {
     if (mediaUrl) URL.revokeObjectURL(mediaUrl);
@@ -349,7 +303,7 @@ export function LyricTimestamper() {
     setMediaUrl("");
     setMediaFile(null);
     setMediaName(project.media.name);
-    setProjectMediaReference(project.media);
+    setProjectMediaReference(project.media.name ? project.media : null);
     setIsVideo(true);
     setCurrentTime(0);
     setDuration(project.media.duration);
@@ -365,12 +319,12 @@ export function LyricTimestamper() {
     setIsInspectorOpen(true);
     historyRef.current = [];
     setSavedProjectFingerprint(projectFingerprint(project.captions, project.captionStyle, project.media));
-    const rememberedMedia = await recallMedia(project.media).catch(() => null);
+    const rememberedMedia = project.media.name ? await recallMedia(project.media).catch(() => null) : null;
     if (rememberedMedia) {
       loadMediaFile(rememberedMedia);
       return;
     }
-    const directoryMedia = project.sourceDirectoryId
+    const directoryMedia = project.media.name && project.sourceDirectoryId
       ? await findProjectMedia(project.sourceDirectoryId, project.media).catch(() => null)
       : null;
     if (directoryMedia && window.confirm(`Found ${project.media.name} in the saved project folder. Connect it now?`)) {
@@ -389,6 +343,7 @@ export function LyricTimestamper() {
 
   async function importFile(file: File): Promise<boolean> {
     try {
+      assertImportFile(file);
       const content = await file.text();
       if (/\.(?:lyricstapper|beatmark)\.json$/i.test(file.name) || /"format"\s*:\s*"(?:lyricstapper|beatmark)-project"/.test(content)) {
         await applyProject(content);
@@ -457,14 +412,18 @@ export function LyricTimestamper() {
       return;
     }
     setLines((previous) => previous.map((line, lineIndex) => {
-      if (lineIndex === index) return { ...line, end: value };
+      if (lineIndex === index && line.start !== null) {
+        const end = boundedCaptionEnd(line.start, value, duration);
+        return end === null ? line : { ...line, end, words: undefined };
+      }
       return line;
     }));
   }
 
   const baseName = (mediaName || "captions").replace(/\.[^.]+$/, "");
   const previewFontSize = Math.max(12, ((fittedVideoSize?.height ?? playerSize.height) || 500) * captionStyle.fontSizePercent / 100);
-  const activeLineText = activeLine?.text || (lines.length && activeIndex >= lines.length ? "Timing complete" : "Prepare your lyrics");
+  const nextIncompleteLine = lines.find((line) => !isTimedLine(line));
+  const activeLineText = activeLine?.text || nextIncompleteLine?.text || (lines.length ? "Timing complete" : "Prepare your lyrics");
 
   function selectTimelineLine(index: number) {
     setSelectedLineIndex(index);
@@ -474,7 +433,7 @@ export function LyricTimestamper() {
   function selectCaptionLine(index: number) {
     const line = lines[index];
     setActiveIndex(index);
-    setSelectedLineIndex(line.end !== null ? index : null);
+    setSelectedLineIndex(isTimedLine(line) ? index : null);
     if (mediaRef.current && line.start !== null) mediaRef.current.currentTime = line.start;
   }
 
@@ -486,7 +445,7 @@ export function LyricTimestamper() {
   function syncTimelineTime(time: number) {
     setCurrentTime(time);
     if (mode !== "edit") return;
-    const lineIndex = lines.findIndex((line) => line.start !== null && line.end !== null && time >= line.start && time < line.end);
+    const lineIndex = lines.findIndex((line) => isTimedLine(line) && time >= line.start && time < line.end);
     if (lineIndex === -1) return;
     setActiveIndex(lineIndex);
     setSelectedLineIndex(lineIndex);
@@ -514,9 +473,15 @@ export function LyricTimestamper() {
   }
 
   async function exportProject() {
+    if (!mediaName) {
+      showNotice("Choose media before saving a project.");
+      openTask("source");
+      return;
+    }
     const filename = `${baseName}.lyricstapper.json`;
     const media = currentProjectMedia;
     try {
+      const browserDownloadContent = serializeProject(lines, captionStyle, media);
       if (projectFileHandleRef.current) {
         await overwriteProjectFile(projectFileHandleRef.current, serializeProject(lines, captionStyle, media, projectDirectoryIdRef.current));
         setSavedProjectFingerprint(currentProjectFingerprint);
@@ -532,12 +497,11 @@ export function LyricTimestamper() {
         return;
       }
       if (result.status === "cancelled") return;
+      downloadText(filename, browserDownloadContent, "application/json");
+      setSavedProjectFingerprint(currentProjectFingerprint);
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "The project folder could not be saved.");
-      return;
     }
-    downloadText(filename, serializeProject(lines, captionStyle, media), "application/json");
-    setSavedProjectFingerprint(currentProjectFingerprint);
   }
 
   function exportAss() {
@@ -557,106 +521,54 @@ export function LyricTimestamper() {
     setIsInspectorOpen(true);
   }
 
-  const taskDetails = WORKSPACE_TASK_DETAILS[activeTask];
   return (
-    <AppShell
-      className="app-shell"
-      contentPadding={0}
-      height="fill"
-      mobileNav={false}
-      variant="section"
-      topNav={<EditorHeader activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onTaskChange={openTask} onOpenProject={requestOpenProject} onSaveProject={() => { void exportProject(); }} onShowShortcuts={() => setIsShortcutDialogOpen(true)} />}
-    >
-      <input className="visually-hidden-input" ref={projectInputRef} type="file" accept=".json,.srt,.ass" onChange={loadCaptionImport} />
-      <section className="workspace" data-inspector-open={isInspectorOpen} style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}>
-        <MediaStage
-          activeTask={activeTask}
-          playerRef={playerRef}
-          mediaUrl={mediaUrl}
-          isVideo={isVideo}
-          fittedVideoSize={fittedVideoSize}
-          currentTime={currentTime}
-          duration={duration}
-          mode={mode}
-          isPlaying={isPlaying}
-          lines={lines}
-          activeIndex={activeIndex}
-          activeLineText={activeLineText}
-          selectedLineIndex={selectedLineIndex}
-          previewLine={previewLine}
-          previewWordIndex={previewWordIndex}
-          captionStyle={captionStyle}
-          previewFontSize={previewFontSize}
-          captionLayoutSize={videoSize}
-          onMediaElement={(element) => { mediaRef.current = element; }}
-          onModeChange={switchMode}
-          onBeginSession={beginSession}
-          onUndoMarker={undoMarker}
-          onTimeChange={syncTimelineTime}
-          onMetadata={connectLoadedMedia}
-          onPlayingChange={setIsPlaying}
-          onSelectLine={selectTimelineLine}
-          onSeek={seekMedia}
-          onLineChange={updateTimelineLine}
-          onCaptionTextChange={updatePreviewCaptionText}
-          onCaptionStyleChange={updateCaptionStyle}
-          sourceActionLabel={projectMediaReference ? `Reconnect ${projectMediaReference.name}` : "Open Source"}
-          onOpenSource={projectMediaReference ? openMediaPicker : () => openTask("source")}
-        />
-        {isInspectorOpen && <button className="inspector-scrim" type="button" aria-label="Close editor tool" onClick={() => setIsInspectorOpen(false)} />}
-        <aside className="tool-inspector" aria-label={taskDetails.title} aria-hidden={!isInspectorOpen}>
-          <div className="inspector-resizer" onPointerDown={beginInspectorResize} role="separator" aria-orientation="vertical" aria-label="Resize editor tool" />
-          <header className="inspector-header">
-            <div>
-              <span className="eyebrow">{taskDetails.eyebrow}</span>
-              <h1>{taskDetails.title}</h1>
-              <p>{taskDetails.description}</p>
-            </div>
-            <Button label="Close editor tool" variant="ghost" isIconOnly icon={<span aria-hidden="true">×</span>} onClick={() => setIsInspectorOpen(false)} />
-          </header>
-          <div className="inspector-scroll">
-            {activeTask === "source" && (
-              <SourcePanel
-                mediaInputRef={mediaInputRef}
-                mediaName={mediaName}
-                projectMediaReference={projectMediaReference}
-                lyricsRows={lyricsRows}
-                preparedLyrics={lines.map((line) => captionSourceText(line.text))}
-                onChooseMedia={openMediaPicker}
-                onLoadMedia={loadMedia}
-                onLyricsChange={setLyricsRows}
-                onPrepareLyrics={loadLyrics}
-              />
-            )}
-            {activeTask === "captions" && <CaptionPanel lines={lines} activeIndex={activeIndex} markingLineIndex={markingLineIndex} duration={duration} onSelectLine={selectCaptionLine} onUpdateText={updateCaptionText} onUpdateEnd={updateEnd} />}
-            {activeTask === "style" && <CaptionStylePanel value={captionStyle} onChange={updateCaptionStyle} />}
-            {activeTask === "export" && (
-              <ExportPanel
-                lineCount={lines.length}
-                completedCount={completedCount}
-                canExportMp4={Boolean(mediaFile && isVideo)}
-                renderProgress={renderProgress}
-                onExportAss={exportAss}
-                onExportSrt={exportSrt}
-                onExportJson={exportJson}
-                onExportMp4={() => { void exportMp4(); }}
-              />
-            )}
-          </div>
-        </aside>
-      </section>
-      <nav className="mobile-taskbar" aria-label="Editor tools">
-        <WorkspaceTabs activeTask={activeTask} completedCount={completedCount} lineCount={lines.length} onChange={openTask} layout="fill" />
-      </nav>
-      <ShortcutDialog isOpen={isShortcutDialogOpen} onOpenChange={setIsShortcutDialogOpen} />
-      <UnsavedChangesDialog
-        isOpen={isUnsavedDialogOpen}
-        onCancel={() => setIsUnsavedDialogOpen(false)}
-        onContinue={() => {
-          setIsUnsavedDialogOpen(false);
-          void openProjectPicker();
-        }}
-      />
-    </AppShell>
+    <EditorWorkspace
+      header={{
+        activeTask, completedCount, lineCount: lines.length, canSaveProject: Boolean(lines.length && mediaName), onTaskChange: openTask,
+        onOpenProject: requestOpenProject,
+        onSaveProject: () => { void exportProject(); },
+        onShowShortcuts: () => setIsShortcutDialogOpen(true),
+      }}
+      projectInputRef={projectInputRef}
+      onProjectInputChange={loadCaptionImport}
+      inspector={{
+        isOpen: isInspectorOpen, width: inspectorWidth,
+        onClose: () => setIsInspectorOpen(false), onResize: beginInspectorResize,
+      }}
+      stage={{
+        activeTask, playerRef, mediaUrl, isVideo, fittedVideoSize, currentTime, duration, mode, isPlaying,
+        lines, activeLineText, selectedLineIndex, previewLine, previewWordIndex,
+        captionStyle, previewFontSize, captionLayoutSize: videoSize,
+        onMediaElement: (element) => { mediaRef.current = element; },
+        onModeChange: switchMode, onBeginSession: beginSession, onUndoMarker: undoMarker,
+        onTimeChange: syncTimelineTime, onMetadata: connectLoadedMedia, onPlayingChange: setIsPlaying,
+        onSelectLine: selectTimelineLine, onSeek: seekMedia, onLineChange: updateTimelineLine,
+        onCaptionTextChange: updatePreviewCaptionText, onCaptionStyleChange: updateCaptionStyle,
+        sourceActionLabel: projectMediaReference ? `Reconnect ${projectMediaReference.name}` : "Open Source",
+        onOpenSource: projectMediaReference ? openMediaPicker : () => openTask("source"),
+      }}
+      source={{
+        mediaInputRef, mediaName, projectMediaReference, lyricsRows,
+        preparedLyrics: lines.map((line) => captionSourceText(line.text)),
+        onChooseMedia: openMediaPicker, onLoadMedia: loadMedia,
+        onLyricsChange: setLyricsRows, onPrepareLyrics: loadLyrics,
+      }}
+      captions={{
+        lines, activeIndex, markingLineIndex, duration,
+        onSelectLine: selectCaptionLine, onUpdateText: updateCaptionText, onUpdateEnd: updateEnd,
+      }}
+      style={{ value: captionStyle, onChange: updateCaptionStyle }}
+      exportPanel={{
+        lineCount: lines.length, completedCount, canExportMp4: Boolean(mediaFile && isVideo), renderProgress,
+        onExportAss: exportAss, onExportSrt: exportSrt, onExportJson: exportJson,
+        onExportMp4: () => { void exportMp4(); },
+      }}
+      shortcutsDialog={{ isOpen: isShortcutDialogOpen, onOpenChange: setIsShortcutDialogOpen }}
+      unsavedDialog={{
+        isOpen: isUnsavedDialogOpen,
+        onCancel: () => setIsUnsavedDialogOpen(false),
+        onContinue: () => { setIsUnsavedDialogOpen(false); void openProjectPicker(); },
+      }}
+    />
   );
 }

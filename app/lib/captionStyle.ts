@@ -63,24 +63,113 @@ export const CAPTION_FONTS = [
   { value: "Courier New", label: "Courier New" },
 ];
 
+const ALLOWED_FONT_FAMILIES = new Set(CAPTION_FONTS.map((font) => font.value));
+const ALLOWED_FONT_WEIGHTS = new Set<CaptionStyle["fontWeight"]>([400, 500, 700, 900]);
+const ALLOWED_HIGHLIGHT_MODES = new Set<HighlightMode>(["none", "text", "wipe", "background"]);
+const HEX_COLOR = /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i;
+
+type CaptionStyleRecord = Partial<Record<keyof CaptionStyle, unknown>>;
+
+function invalidField(field: keyof CaptionStyle): never {
+  throw new Error(`Caption style field "${field}" is invalid.`);
+}
+
+function numberField(record: CaptionStyleRecord, field: keyof CaptionStyle, fallback: number, minimum: number, maximum: number, strict: boolean): number {
+  const value = record[field];
+  if (value === undefined) return fallback;
+  if (typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum) return value;
+  if (strict) invalidField(field);
+  return fallback;
+}
+
+function booleanField(record: CaptionStyleRecord, field: keyof CaptionStyle, fallback: boolean, strict: boolean): boolean {
+  const value = record[field];
+  if (value === undefined) return fallback;
+  if (typeof value === "boolean") return value;
+  if (strict) invalidField(field);
+  return fallback;
+}
+
+function colorField(record: CaptionStyleRecord, field: keyof CaptionStyle, fallback: string, strict: boolean): string {
+  const value = record[field];
+  if (value === undefined) return fallback;
+  if (typeof value === "string" && HEX_COLOR.test(value)) return value.toLowerCase();
+  if (strict) invalidField(field);
+  return fallback;
+}
+
+function captionStyleFrom(value: unknown, strict: boolean): CaptionStyle {
+  if (value === undefined) return { ...DEFAULT_CAPTION_STYLE };
+  if (value === null) {
+    if (strict) throw new Error("Caption style must be an object.");
+    return { ...DEFAULT_CAPTION_STYLE };
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    if (strict) throw new Error("Caption style must be an object.");
+    return { ...DEFAULT_CAPTION_STYLE };
+  }
+  const record = value as CaptionStyleRecord;
+  const fontFamily = record.fontFamily === undefined
+    ? DEFAULT_CAPTION_STYLE.fontFamily
+    : typeof record.fontFamily === "string" && ALLOWED_FONT_FAMILIES.has(record.fontFamily)
+      ? record.fontFamily
+      : strict ? invalidField("fontFamily") : DEFAULT_CAPTION_STYLE.fontFamily;
+  const fontWeight = record.fontWeight === undefined
+    ? DEFAULT_CAPTION_STYLE.fontWeight
+    : typeof record.fontWeight === "number" && ALLOWED_FONT_WEIGHTS.has(record.fontWeight as CaptionStyle["fontWeight"])
+      ? record.fontWeight as CaptionStyle["fontWeight"]
+      : strict ? invalidField("fontWeight") : DEFAULT_CAPTION_STYLE.fontWeight;
+  const highlightMode = record.highlightMode === undefined
+    ? DEFAULT_CAPTION_STYLE.highlightMode
+    : typeof record.highlightMode === "string" && ALLOWED_HIGHLIGHT_MODES.has(record.highlightMode as HighlightMode)
+      ? record.highlightMode as HighlightMode
+      : strict ? invalidField("highlightMode") : DEFAULT_CAPTION_STYLE.highlightMode;
+
+  return {
+    fontFamily,
+    fontSizePercent: numberField(record, "fontSizePercent", DEFAULT_CAPTION_STYLE.fontSizePercent, 2.5, 12, strict),
+    maxWidthPercent: numberField(record, "maxWidthPercent", DEFAULT_CAPTION_STYLE.maxWidthPercent, 20, 96, strict),
+    fontWeight,
+    textColor: colorField(record, "textColor", DEFAULT_CAPTION_STYLE.textColor, strict),
+    pastOpacity: numberField(record, "pastOpacity", DEFAULT_CAPTION_STYLE.pastOpacity, 0, 100, strict),
+    highlightMode,
+    highlightColor: colorField(record, "highlightColor", DEFAULT_CAPTION_STYLE.highlightColor, strict),
+    highlightTextColor: colorField(record, "highlightTextColor", DEFAULT_CAPTION_STYLE.highlightTextColor, strict),
+    shadow: booleanField(record, "shadow", DEFAULT_CAPTION_STYLE.shadow, strict),
+    outline: booleanField(record, "outline", DEFAULT_CAPTION_STYLE.outline, strict),
+    captionBackground: booleanField(record, "captionBackground", DEFAULT_CAPTION_STYLE.captionBackground, strict),
+    backgroundColor: colorField(record, "backgroundColor", DEFAULT_CAPTION_STYLE.backgroundColor, strict),
+    backgroundOpacity: numberField(record, "backgroundOpacity", DEFAULT_CAPTION_STYLE.backgroundOpacity, 0, 100, strict),
+    centerXPercent: numberField(record, "centerXPercent", DEFAULT_CAPTION_STYLE.centerXPercent, 0, 100, strict),
+    bottomPercent: numberField(record, "bottomPercent", DEFAULT_CAPTION_STYLE.bottomPercent, 0, 100, strict),
+    uppercase: booleanField(record, "uppercase", DEFAULT_CAPTION_STYLE.uppercase, strict),
+  };
+}
+
 export function normalizeCaptionStyle(value: unknown): CaptionStyle {
-  if (!value || typeof value !== "object") return DEFAULT_CAPTION_STYLE;
-  const candidate = value as Partial<CaptionStyle>;
-  return { ...DEFAULT_CAPTION_STYLE, ...candidate };
+  return captionStyleFrom(value, false);
+}
+
+export function parseCaptionStyle(value: unknown): CaptionStyle {
+  return captionStyleFrom(value, true);
 }
 
 export function colorWithOpacity(hex: string, opacity: number): string {
-  const clean = hex.replace("#", "");
+  const safeHex = HEX_COLOR.test(hex) ? hex : "#000000";
+  const clean = safeHex.replace("#", "");
   const expanded = clean.length === 3 ? clean.split("").map((part) => part + part).join("") : clean;
   const number = Number.parseInt(expanded, 16);
-  if (!Number.isFinite(number)) return `rgba(0,0,0,${opacity / 100})`;
-  return `rgba(${(number >> 16) & 255},${(number >> 8) & 255},${number & 255},${opacity / 100})`;
+  const alpha = Math.max(0, Math.min(100, Number.isFinite(opacity) ? opacity : 0)) / 100;
+  return `rgba(${(number >> 16) & 255},${(number >> 8) & 255},${number & 255},${alpha})`;
 }
 
 export function assColor(hex: string, alpha = 0): string {
-  const clean = hex.replace("#", "").padEnd(6, "0");
-  const red = clean.slice(0, 2);
-  const green = clean.slice(2, 4);
-  const blue = clean.slice(4, 6);
-  return `&H${Math.round(alpha).toString(16).padStart(2, "0").toUpperCase()}${blue}${green}${red}`.toUpperCase();
+  const safeHex = HEX_COLOR.test(hex) ? hex : "#000000";
+  const clean = safeHex.replace("#", "");
+  const expanded = clean.length === 3 ? clean.split("").map((part) => part + part).join("") : clean;
+  const red = expanded.slice(0, 2);
+  const green = expanded.slice(2, 4);
+  const blue = expanded.slice(4, 6);
+  const safeAlpha = Math.max(0, Math.min(255, Number.isFinite(alpha) ? Math.round(alpha) : 0));
+  return `&H${safeAlpha.toString(16).padStart(2, "0").toUpperCase()}${blue}${green}${red}`.toUpperCase();
 }

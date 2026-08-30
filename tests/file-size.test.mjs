@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const MAX_LINES = 800;
+const MAX_LINES = 600;
 const SOURCE_EXTENSIONS = new Set([".cjs", ".css", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const sourceRoots = ["app", "tests", "worker"];
@@ -26,7 +26,7 @@ function countLines(content) {
   return content.split(/\r?\n/).length - (content.endsWith("\n") ? 1 : 0);
 }
 
-test("source files stay within the 800 line limit", async () => {
+test("source files stay within the 600 line limit", async () => {
   const nestedFiles = (await Promise.all(sourceRoots.map(collectSourceFiles))).flat();
   const sourceFiles = [...rootSourceFiles, ...nestedFiles].sort();
   const oversizedFiles = [];

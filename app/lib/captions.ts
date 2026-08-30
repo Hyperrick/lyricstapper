@@ -1,4 +1,6 @@
-import { assColor, CaptionStyle, DEFAULT_CAPTION_STYLE } from "./captionStyle";
+import { assColor, DEFAULT_CAPTION_STYLE, normalizeCaptionStyle } from "./captionStyle";
+import type { CaptionStyle } from "./captionStyle";
+import { assertImportContentSize, assertImportFilename, IMPORT_LIMITS, parseJsonRecord, validateBoundedNumber, validateCaptionLines } from "./importValidation";
 
 export type TimedLine = {
   id: string;
@@ -13,6 +15,22 @@ export type TimedWord = {
   start: number;
   end: number;
 };
+
+export type CompletedTimedLine = TimedLine & {
+  start: number;
+  end: number;
+};
+
+export function isTimedLine(line: TimedLine): line is CompletedTimedLine {
+  return line.start !== null && line.end !== null && line.end > line.start;
+}
+
+export function boundedCaptionEnd(start: number, requestedEnd: number, mediaDuration: number): number | null {
+  if (!Number.isFinite(start) || !Number.isFinite(requestedEnd) || start < 0) return null;
+  const maximumEnd = Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : Number.POSITIVE_INFINITY;
+  if (maximumEnd <= start) return null;
+  return Math.min(maximumEnd, Math.max(requestedEnd, start + 0.05));
+}
 
 export function captionSourceText(text: string): string {
   return text.replace(/\s*\r?\n\s*/g, " ").replace(/\s+/g, " ").trim();
@@ -100,8 +118,7 @@ function srtTime(seconds: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
 }
 
-function assTime(seconds: number): string {
-  const cs = Math.max(0, Math.round(seconds * 100));
+function assTimeFromCentiseconds(cs: number): string {
   const hours = Math.floor(cs / 360_000);
   const minutes = Math.floor((cs % 360_000) / 6000);
   const secs = Math.floor((cs % 6000) / 100);
@@ -109,13 +126,29 @@ function assTime(seconds: number): string {
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
 }
 
-function completed(lines: TimedLine[]): TimedLine[] {
-  return lines.filter((line) => line.start !== null && line.end !== null && line.end > line.start);
+function distributeAssCentiseconds(words: TimedWord[], totalCentiseconds: number): number[] {
+  if (!words.length) return [];
+  const target = Math.max(words.length, totalCentiseconds);
+  const remaining = target - words.length;
+  const weights = words.map((word) => Math.max(0, word.end - word.start));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const shares = weights.map((weight) => remaining * (totalWeight > 0 ? weight / totalWeight : 1 / words.length));
+  const durations = shares.map((share) => 1 + Math.floor(share));
+  const undistributed = target - durations.reduce((sum, duration) => sum + duration, 0);
+  const remainderOrder = shares
+    .map((share, index) => ({ index, remainder: share - Math.floor(share) }))
+    .sort((left, right) => right.remainder - left.remainder || left.index - right.index);
+  for (let index = 0; index < undistributed; index += 1) durations[remainderOrder[index].index] += 1;
+  return durations;
+}
+
+function completed(lines: TimedLine[]): CompletedTimedLine[] {
+  return lines.filter(isTimedLine);
 }
 
 export function toSrt(lines: TimedLine[]): string {
   return completed(lines)
-    .map((line, index) => `${index + 1}\n${srtTime(line.start!)} --> ${srtTime(line.end!)}\n${line.text}\n`)
+    .map((line, index) => `${index + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${line.text}\n`)
     .join("\n");
 }
 
@@ -126,14 +159,17 @@ export function toJson(lines: TimedLine[], mediaName: string, duration: number):
     end: line.end,
     words: distributeWords(line),
   }));
-  return JSON.stringify({ version: 1, media: mediaName, duration, captions }, null, 2);
+  const captionDuration = captions.reduce((maximum, caption) => Math.max(maximum, caption.end), 0);
+  const effectiveDuration = Math.max(Number.isFinite(duration) ? duration : 0, captionDuration);
+  return JSON.stringify({ version: 1, media: mediaName, duration: effectiveDuration, captions }, null, 2);
 }
 
 function assEscape(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/{/g, "\\{").replace(/}/g, "\\}");
 }
 
-export function toAss(lines: TimedLine[], videoWidth = 720, videoHeight = 1280, style: CaptionStyle = DEFAULT_CAPTION_STYLE): string {
+export function toAss(lines: TimedLine[], videoWidth = 720, videoHeight = 1280, inputStyle: CaptionStyle = DEFAULT_CAPTION_STYLE): string {
+  const style = normalizeCaptionStyle(inputStyle);
   const width = Math.max(1, Math.round(videoWidth));
   const height = Math.max(1, Math.round(videoHeight));
   const fontSize = Math.max(18, Math.round(height * style.fontSizePercent / 100));
@@ -151,10 +187,14 @@ export function toAss(lines: TimedLine[], videoWidth = 720, videoHeight = 1280, 
     const words = distributeWords(line);
     const forcedBreaks = forcedLineBreakWordIndexes(line.text);
     const karaokeTag = style.highlightMode === "wipe" ? "\\kf" : "\\k";
+    const startCentiseconds = Math.max(0, Math.round(line.start * 100));
+    const lineCentiseconds = Math.max(1, Math.round(line.end * 100) - startCentiseconds);
+    const wordDurations = distributeAssCentiseconds(words, lineCentiseconds);
     const karaoke = words
-      .map((word, index) => `{${karaokeTag}${Math.max(1, Math.round((word.end - word.start) * 100))}}${index === 0 ? "" : forcedBreaks.has(index) ? "\\N" : " "}${assEscape(style.uppercase ? word.word.toUpperCase() : word.word)}`)
+      .map((word, index) => `{${karaokeTag}${wordDurations[index]}}${index === 0 ? "" : forcedBreaks.has(index) ? "\\N" : " "}${assEscape(style.uppercase ? word.word.toUpperCase() : word.word)}`)
       .join("");
-    return `Dialogue: 0,${assTime(line.start!)},${assTime(line.end!)},Lyric,,0,0,0,,{\\an2\\pos(${positionX},${positionY})\\fad(120,140)}${karaoke}`;
+    const endCentiseconds = startCentiseconds + wordDurations.reduce((sum, duration) => sum + duration, 0);
+    return `Dialogue: 0,${assTimeFromCentiseconds(startCentiseconds)},${assTimeFromCentiseconds(endCentiseconds)},Lyric,,0,0,0,,{\\an2\\pos(${positionX},${positionY})\\fad(120,140)}${karaoke}`;
   });
   return header + events.join("\n") + "\n";
 }
@@ -169,48 +209,80 @@ export function downloadText(filename: string, content: string, type: string): v
   URL.revokeObjectURL(url);
 }
 
-function parseSrtTime(value: string): number {
-  const match = value.trim().match(/(\d+):(\d+):(\d+)[,.](\d+)/);
-  if (!match) return 0;
-  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(match[4].padEnd(3, "0").slice(0, 3)) / 1000;
+function parseTimestamp(value: string, label: string, fractionScale: number): number {
+  const match = value.trim().match(/^(\d{1,3}):([0-5]\d):([0-5]\d)[,.](\d{1,3})$/);
+  if (!match) throw new Error(`${label} is not a valid timestamp.`);
+  const fraction = Number(match[4].padEnd(fractionScale, "0").slice(0, fractionScale)) / 10 ** fractionScale;
+  const seconds = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + fraction;
+  if (!Number.isFinite(seconds) || seconds > IMPORT_LIMITS.maxTimelineSeconds) {
+    throw new Error(`${label} exceeds the ${IMPORT_LIMITS.maxTimelineSeconds / 3600}-hour timeline limit.`);
+  }
+  return seconds;
 }
 
-function parseAssTime(value: string): number {
-  const match = value.trim().match(/(\d+):(\d+):(\d+)[.](\d+)/);
-  if (!match) return 0;
-  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(match[4].padEnd(2, "0").slice(0, 2)) / 100;
+function parseSrtTime(value: string, label: string): number {
+  return parseTimestamp(value, label, 3);
 }
 
-function importedLine(text: string, start: number, end: number, index: number, words?: TimedWord[]): TimedLine {
-  return { id: `import-${Date.now()}-${index}`, text, start, end, words };
+function parseAssTime(value: string, label: string): number {
+  return parseTimestamp(value, label, 2);
 }
 
 export function importCaptionFile(filename: string, content: string): TimedLine[] {
+  assertImportFilename(filename);
+  assertImportContentSize(content);
   const extension = filename.toLowerCase().split(".").pop();
   if (extension === "json") {
-    const parsed = JSON.parse(content) as { captions?: Array<{ text?: string; start?: number; end?: number; words?: TimedWord[] }> };
-    if (!Array.isArray(parsed.captions)) throw new Error("No captions found in JSON file.");
-    return parsed.captions
-      .filter((caption) => typeof caption.text === "string" && Number.isFinite(caption.start) && Number.isFinite(caption.end))
-      .map((caption, index) => importedLine(caption.text!, caption.start!, caption.end!, index, caption.words));
+    const parsed = parseJsonRecord(content, "The caption JSON file");
+    const parsedDuration = parsed.duration === undefined
+      ? undefined
+      : validateBoundedNumber(parsed.duration, "Caption media duration", {
+        minimum: 0,
+        maximum: IMPORT_LIMITS.maxTimelineSeconds,
+      });
+    return validateCaptionLines(parsed.captions, {
+      allowIncomplete: false,
+      idPrefix: `import-${Date.now()}`,
+      maximumEndTime: parsedDuration !== undefined && parsedDuration > 0 ? parsedDuration : undefined,
+      requireNonEmpty: true,
+    });
   }
 
   if (extension === "srt") {
-    return content.trim().split(/\r?\n\s*\r?\n/).flatMap((block, index) => {
+    const blocks = content.trim() ? content.trim().split(/\r?\n\s*\r?\n/) : [];
+    if (blocks.length > IMPORT_LIMITS.maxCaptionLines) {
+      throw new Error(`Import files may not contain more than ${IMPORT_LIMITS.maxCaptionLines} caption lines.`);
+    }
+    const captions = blocks.map((block, index) => {
       const rows = block.split(/\r?\n/);
       const timingIndex = rows.findIndex((row) => row.includes("-->"));
-      if (timingIndex === -1) return [];
+      if (timingIndex === -1) throw new Error(`SRT caption ${index + 1} has no timing row.`);
       const [startText, endText] = rows[timingIndex].split("-->");
       const text = rows.slice(timingIndex + 1).join("\n").replace(/<[^>]+>/g, "").trim();
-      return text ? [importedLine(text, parseSrtTime(startText), parseSrtTime(endText), index)] : [];
+      if (!text) throw new Error(`SRT caption ${index + 1} has no text.`);
+      return {
+        text,
+        start: parseSrtTime(startText ?? "", `SRT caption ${index + 1} start`),
+        end: parseSrtTime(endText ?? "", `SRT caption ${index + 1} end`),
+      };
+    });
+    return validateCaptionLines(captions, {
+      allowIncomplete: false,
+      idPrefix: `import-${Date.now()}`,
+      requireNonEmpty: true,
     });
   }
 
   if (extension === "ass") {
-    return content.split(/\r?\n/).filter((row) => row.startsWith("Dialogue:")).map((row, index) => {
+    const dialogueRows = content.split(/\r?\n/).filter((row) => row.startsWith("Dialogue:"));
+    if (dialogueRows.length > IMPORT_LIMITS.maxCaptionLines) {
+      throw new Error(`Import files may not contain more than ${IMPORT_LIMITS.maxCaptionLines} caption lines.`);
+    }
+    const captions = dialogueRows.map((row, index) => {
       const fields = row.slice("Dialogue:".length).split(",");
-      const start = parseAssTime(fields[1] ?? "0:00:00.00");
-      const end = parseAssTime(fields[2] ?? "0:00:00.00");
+      if (fields.length < 10) throw new Error(`ASS dialogue ${index + 1} is incomplete.`);
+      const start = parseAssTime(fields[1] ?? "", `ASS dialogue ${index + 1} start`);
+      const end = parseAssTime(fields[2] ?? "", `ASS dialogue ${index + 1} end`);
       const assText = fields.slice(9).join(",");
       const words: TimedWord[] = [];
       const wordRows: string[][] = [[]];
@@ -220,8 +292,15 @@ export function importCaptionFile(filename: string, content: string): TimedLine[
       while ((match = karaokePattern.exec(assText))) {
         const hasLineBreak = /\\N/.test(match[2]);
         const word = match[2].replace(/\\[Nn]/g, " ").trim();
-        const wordEnd = cursor + Number(match[1]) / 100;
+        const duration = Number(match[1]) / 100;
+        if (!Number.isFinite(duration) || duration <= 0 || duration > IMPORT_LIMITS.maxTimelineSeconds) {
+          throw new Error(`ASS dialogue ${index + 1} contains invalid karaoke timing.`);
+        }
+        const wordEnd = cursor + duration;
         if (word) {
+          if (words.length >= IMPORT_LIMITS.maxWordsPerLine) {
+            throw new Error(`ASS dialogue ${index + 1} contains too many timed words.`);
+          }
           if (hasLineBreak && wordRows[wordRows.length - 1].length) wordRows.push([]);
           wordRows[wordRows.length - 1].push(word);
           words.push({ word, start: cursor, end: wordEnd });
@@ -231,8 +310,13 @@ export function importCaptionFile(filename: string, content: string): TimedLine[
       const text = (words.length
         ? wordRows.map((wordsInRow) => wordsInRow.join(" ")).join("\n")
         : assText.replace(/\{[^}]*\}/g, "").replace(/\\N/g, "\n").replace(/\\n/g, " ")).trim();
-      return importedLine(text, start, end, index, words.length ? words : undefined);
+      return { text, start, end, words: words.length ? words : undefined };
     }).filter((line) => line.text);
+    return validateCaptionLines(captions, {
+      allowIncomplete: false,
+      idPrefix: `import-${Date.now()}`,
+      requireNonEmpty: true,
+    });
   }
 
   throw new Error("Please choose a JSON, SRT, or ASS caption file.");
