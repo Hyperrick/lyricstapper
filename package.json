@@ -46,7 +46,7 @@
     "@stylexjs/stylex": "0.19.1",
     "mediabunny": "^1.61.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react-dom": "19.3.1",
     "react-server-dom-webpack": "19.3.0"
   },
   "devDependencies": {
