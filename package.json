@@ -27,7 +27,8 @@
   },
   "overrides": {
     "sharp": "^0.35.5",
-    "undici": "^7.30.1"
+    "undici": "^7.30.1",
+    "satori": "^0.33.5"
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
